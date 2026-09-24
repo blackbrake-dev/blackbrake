@@ -1,0 +1,41 @@
+name: publish
+
+# Publishes to npm when a version tag (v1.2.3) is pushed.
+# Authentication: npm trusted publishing (OIDC). No long-lived npm token is stored anywhere.
+# Provenance: generated automatically, linking the published package to this workflow run.
+on:
+  push:
+    tags: ['v*']
+
+permissions:
+  contents: read
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    environment: npm
+    permissions:
+      contents: read
+      id-token: write # required for OIDC trusted publishing and provenance
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 24
+          registry-url: https://registry.npmjs.org
+      - name: Check npm supports trusted publishing (>= 11.5.1)
+        run: |
+          node -e "const [a,b,c]=process.argv[1].split('.').map(Number); if (a<11||(a===11&&(b<5||(b===5&&c<1)))) { console.error('npm '+process.argv[1]+' is too old for trusted publishing'); process.exit(1) }" "$(npm -v)"
+      - name: Tag matches package.json version
+        run: |
+          test "v$(node -p "require('./package.json').version")" = "$GITHUB_REF_NAME" \
+            || { echo "Tag $GITHUB_REF_NAME does not match package.json version"; exit 1; }
+      - run: npm test
+      - run: npm publish
+        env:
+          # Only for bootstrapping the very first release, before trusted publishing can be
+          # configured (npm requires the package to exist first). Once trusted publishing is set
+          # up, delete the NPM_TOKEN secret: npm tries OIDC first and never needs it again.
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
