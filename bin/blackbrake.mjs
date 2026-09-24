@@ -48,7 +48,7 @@ function parseArgs(argv) {
 }
 
 const plural = (n, one, many = `${one}s`) => `${n.toLocaleString('en-US')} ${n === 1 ? one : many}`;
-const fmtBytes = (b) => (b > 1e6 ? `${(b / 1e6).toFixed(0)} MB` : `${Math.max(1, Math.round(b / 1e3))} KB`);
+const fmtBytes = (b) => (b > 1e6 ? `${(b / 1e6).toFixed(0)} MB` : b >= 1e3 ? `${Math.round(b / 1e3)} KB` : `${b} B`);
 const usd = (n) => `$${n >= 100 ? n.toFixed(0) : n.toFixed(2)}`;
 const pct = (x) => `${Math.round(x * 100)}%`;
 const k = (n) => (n >= 1000 ? `${(n / 1000).toFixed(1)}k` : String(n));
