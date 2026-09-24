@@ -1,6 +1,6 @@
 {
   "name": "blackbrake",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "Local, read-only audit of AI coding agent transcripts: exposed secrets, risky add-ons and where your spend concentrates. No network, no writes, no dependencies.",
   "type": "module",
   "bin": {
