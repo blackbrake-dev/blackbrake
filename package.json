@@ -1,0 +1,43 @@
+{
+  "name": "blackbrake",
+  "version": "0.0.0",
+  "description": "Local, read-only audit of AI coding agent transcripts: exposed secrets, risky add-ons and where your spend concentrates. No network, no writes, no dependencies.",
+  "type": "module",
+  "bin": {
+    "blackbrake": "bin/blackbrake.mjs"
+  },
+  "files": [
+    "bin/",
+    "src/",
+    "vendor/gitleaks.rules.json",
+    "LICENSE",
+    "NOTICE",
+    "THIRD_PARTY_NOTICES",
+    "SECURITY.md",
+    "README.md"
+  ],
+  "scripts": {
+    "test": "node --test \"test/**/*.test.mjs\"",
+    "build:rules": "node scripts/build-rules.mjs"
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "keywords": [
+    "ai-agents",
+    "claude-code",
+    "secrets",
+    "security",
+    "audit",
+    "local-first"
+  ],
+  "license": "Apache-2.0",
+  "homepage": "https://blackbrake.dev",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/blackbrake-dev/blackbrake.git"
+  },
+  "bugs": {
+    "url": "https://github.com/blackbrake-dev/blackbrake/issues"
+  }
+}
