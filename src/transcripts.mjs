@@ -25,6 +25,7 @@ export function listTranscripts(root) {
 // Messages that arrive with role "user" but were written by the harness, not the person.
 // Counting them as the user's words was a measured error in this project's own research.
 const HARNESS_TEXT = /^(Another Claude session sent a message|\[Subagent hand-back\]|Base directory for this skill:|Caveat:|<)/;
+export const isHarnessText = (text) => HARNESS_TEXT.test(text.trimStart());
 
 export function describeFile(root, file) {
   const rel = path.relative(root, file).split(path.sep);

@@ -100,7 +100,7 @@ test('CLI never prints a secret value, in text or JSON output', () => {
   const dir = makeTranscripts({
     main: [user(`my key ${LINEAR} and ${GITHUB}`, '2026-01-01T10:00:00Z')],
   });
-  for (const args of [['audit', '--path', dir, '--all'], ['audit', '--path', dir, '--json']]) {
+  for (const args of [['audit', '--path', dir, '--home', dir, '--all'], ['audit', '--path', dir, '--home', dir, '--json']]) {
     const out = execFileSync(process.execPath, [BIN, ...args], { encoding: 'utf8' });
     assert.ok(!out.includes(LINEAR), `Linear key leaked in: ${args.join(' ')}`);
     assert.ok(!out.includes(GITHUB), `GitHub token leaked in: ${args.join(' ')}`);

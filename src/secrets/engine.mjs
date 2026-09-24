@@ -11,7 +11,20 @@ export function loadRules(file = RULES_FILE) {
   const data = JSON.parse(fs.readFileSync(file, 'utf8'));
   const compile = (r) => new RegExp(r.source, r.flags.includes('g') ? r.flags : r.flags + 'g');
   const compileTest = (r) => new RegExp(r.source, r.flags.replace('g', ''));
+  // One combined, case-insensitive search for every rule keyword. A fragment is only tested
+  // against the rules whose keywords it contains (gitleaks' own prefilter, done in one pass).
+  const byKeyword = new Map();
+  const alwaysRun = [];
+  data.rules.forEach((r, i) => {
+    if (!r.keywords.length) alwaysRun.push(i);
+    for (const k of r.keywords) (byKeyword.get(k) ?? byKeyword.set(k, []).get(k)).push(i);
+  });
+  const escape = (s) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  const keywordRe = new RegExp([...byKeyword.keys()].sort((a, b) => b.length - a.length).map(escape).join('|'), 'gi');
   return {
+    keywordRe,
+    byKeyword,
+    alwaysRun,
     meta: { upstreamCommit: data.upstreamCommit, generated: data.generated, count: data.rules.length },
     global: {
       regexes: data.globalAllowlist.regexes.map(compileTest),
@@ -63,11 +76,19 @@ const lineAround = (text, index, len) => {
 };
 
 // Returns [{ ruleId, secret, index, length }]
+function candidateRules(rules, text) {
+  const idx = new Set(rules.alwaysRun);
+  rules.keywordRe.lastIndex = 0;
+  let m;
+  while ((m = rules.keywordRe.exec(text)) !== null) {
+    for (const i of rules.byKeyword.get(m[0].toLowerCase()) ?? []) idx.add(i);
+  }
+  return [...idx].sort((a, b) => a - b).map((i) => rules.rules[i]);
+}
+
 export function scanText(rules, text) {
   const out = [];
-  const lower = text.toLowerCase();
-  for (const rule of rules.rules) {
-    if (rule.keywords.length && !rule.keywords.some((k) => lower.includes(k))) continue;
+  for (const rule of candidateRules(rules, text)) {
     rule.re.lastIndex = 0;
     let m;
     while ((m = rule.re.exec(text)) !== null) {

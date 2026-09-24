@@ -20,8 +20,19 @@ Read this first. It is the reason you can run it.
 
 ## What it does (v0)
 
-It reads the session transcripts that Claude Code keeps on disk (`~/.claude/projects/**/*.jsonl`)
-and reports **secrets that ended up in them**:
+One screen, three sections, from files Claude Code already keeps on your machine
+(`~/.claude/projects/**/*.jsonl`, `~/.claude/`, `~/.claude.json`):
+
+1. **Exposure** — secrets that ended up in your transcripts.
+2. **What you load** — skills, agents, commands, plugins and MCP servers: how much of it is paid
+   for on every turn, how much you ever use, and static patterns worth a look (nothing is executed).
+3. **Spend** — where your agent spend concentrates: your costliest 10% of episodes, your typical
+   and 90th-percentile episode, the fixed context you pay on every turn. Descriptive only: no
+   "you could save X%" claims.
+
+### Exposure
+
+It reports **secrets that ended up in your transcripts**:
 
 - which secrets look real, and which look like test fixtures, documented examples or local-dev values;
 - how many copies of each one exist, and where (your messages, agent commands, tool output,
@@ -50,26 +61,53 @@ most of its occurrences look real, and never when it was written into a test or 
 It is still a heuristic: check where a finding appears before rotating anything. `--all` shows the
 findings it considered not real, so you can disagree.
 
+### What you load
+
+```
+WHAT YOU LOAD — skills, agents, plugins and MCP servers
+  337 skills · 68 agents · 94 commands · 4 plugins enabled · 2 MCP servers
+  353 items installed twice under the same name (counted once)
+  Descriptions loaded into every turn: ~28.9k tokens (skills ~25.1k, agents ~3.9k; estimated)
+  Skills used at least once: 17 of 337 (5%)
+  Settings: the dangerous-mode confirmation prompt is turned off
+  Patterns worth a look: 1 in executable code · 3 in documentation
+```
+
+Patterns are signals, not verdicts: security skills legitimately describe `curl | sh` in their
+docs. Matches in executable files and hooks are listed first.
+
+### Spend
+
+```
+SPEND — where your agent spend concentrates
+  $960 across 136 episodes (API list prices; on a subscription this is a unit of effort, not a bill)
+  Your costliest 10% of episodes account for 68% of it · typical episode $1.33 · 90th percentile $21.44
+```
+
+An *episode* is one prompt you wrote plus all the agent work until your next one. Messages the
+harness injects into the conversation (subagent reports, skill bodies) do not count as prompts;
+counting them splits expensive episodes into pieces and hides the concentration.
+
 ## Usage
 
 ```
-blackbrake audit [--path <dir>] [--json] [--all]
+blackbrake audit [--path <dir>] [--home <dir>] [--json] [--all]
 ```
 
 | Option | Meaning |
 |---|---|
 | `--path <dir>` | Transcript folder. Default: `~/.claude/projects` |
+| `--home <dir>` | Folder holding `.claude/` and `.claude.json`. Default: your home |
 | `--json` | Machine-readable output. Secret values are never included |
-| `--all` | Also list findings classified as examples/tests or local-dev values |
+| `--all` | Show every finding, including those classified as not real or found in documentation |
 
 Requires Node.js 20 or later.
 
 ## Roadmap
 
-Planned, in order: risk review of installed skills/MCP servers/plugins (static, never executes
-them); where your agent spend concentrates (your costliest 10% of episodes, measured against your
-own baseline); a real-time `guard` that starts in observe-only mode. Other agents (Codex, Cursor)
-after that.
+A real-time `guard` that starts in observe-only mode (cost and damage brakes with session
+context, built on [cc-safety-net](https://github.com/kenryu42/cc-safety-net) rather than
+replacing it). Other agents (Codex, Cursor) after that.
 
 ## Credits
 

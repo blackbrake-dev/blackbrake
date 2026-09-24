@@ -2,7 +2,7 @@
 // copies live and how the secret first got in. Values are never kept in the report: only a hash,
 // the rule id and a masked shape.
 import crypto from 'node:crypto';
-import { describeFile, fragmentsOf, readTranscript } from '../transcripts.mjs';
+import { fragmentsOf } from '../transcripts.mjs';
 import { classifyOccurrence, classifySecret, isTestPath } from './context.mjs';
 import { scanText } from './engine.mjs';
 
@@ -23,16 +23,21 @@ const ORIGIN = {
 };
 const originOf = (kind, tool) => ORIGIN[`${kind}:${tool}`] ?? ORIGIN[kind] ?? kind;
 
-export async function auditSecrets({ root, files, rules, onFile }) {
+// Streaming analyzer: onFile() for each transcript, onRecord() for each line, finish() at the end.
+export function createSecretsAnalyzer(rules) {
   const secrets = new Map();
-  for (const file of files) {
-    const { project, session, isSubagent } = describeFile(root, file);
-    const toolCalls = new Map();
-    for await (const { record } of readTranscript(file)) {
+  let file = null;
+  let toolCalls = new Map();
+
+  return {
+    onFile(info) { file = info; toolCalls = new Map(); },
+    onRecord(record) {
+      // Claude Code mirrors tool results inside the same record. Identical strings are scanned
+      // once per record; their copies are still counted.
+      const scanned = new Map();
       for (const frag of fragmentsOf(record, toolCalls)) {
-        const found = scanText(rules, frag.text);
-        if (!found.length) continue;
-        const filePath = frag.filePath ?? null;
+        let found = scanned.get(frag.text);
+        if (!found) { found = scanText(rules, frag.text); scanned.set(frag.text, found); }
         for (const f of found) {
           const key = hash(f.secret);
           let s = secrets.get(key);
@@ -43,31 +48,39 @@ export async function auditSecrets({ root, files, rules, onFile }) {
           s.copies++;
           const place = frag.kind === 'tool-output' || frag.kind === 'tool-input' ? `${frag.kind}${frag.tool ? `:${frag.tool}` : ''}` : frag.kind;
           s.where[place] = (s.where[place] ?? 0) + 1;
-          s.sessions.add(session);
-          s.projects.add(project);
-          if (isSubagent) s.subagentCopies++;
-          if (isTestPath(filePath)) s.seenInTestFile = true;
+          s.sessions.add(file.session);
+          s.projects.add(file.project);
+          if (file.isSubagent) s.subagentCopies++;
+          if (isTestPath(frag.filePath)) s.seenInTestFile = true;
           // Mirror copies stored in record metadata carry no context of their own: they count as
           // copies but do not vote on whether the value is real.
-          if (frag.kind !== 'other') s.classes.push(classifyOccurrence({ secret: f.secret, text: frag.text, index: f.index, filePath }));
+          if (frag.kind !== 'other') s.classes.push(classifyOccurrence({ secret: f.secret, text: frag.text, index: f.index, filePath: frag.filePath }));
           const ts = frag.ts ? Date.parse(frag.ts) : Number.POSITIVE_INFINITY;
           if (!s.first || ts < s.first.ts) s.first = { ts, origin: originOf(frag.kind, frag.tool) };
         }
       }
-    }
-    onFile?.(file);
-  }
-  return [...secrets.values()].map((s) => ({
-    key: s.key,
-    ruleId: s.ruleId,
-    shape: s.shape,
-    classification: classifySecret(s.classes, { seenInTestFile: s.seenInTestFile }),
-    copies: s.copies,
-    subagentCopies: s.subagentCopies,
-    sessions: s.sessions.size,
-    projects: [...s.projects],
-    where: s.where,
-    firstSeen: Number.isFinite(s.first.ts) ? new Date(s.first.ts).toISOString() : null,
-    origin: s.first.origin,
-  })).sort((a, b) => b.copies - a.copies);
+    },
+    finish() {
+      return [...secrets.values()].map((s) => ({
+        key: s.key,
+        ruleId: s.ruleId,
+        shape: s.shape,
+        classification: classifySecret(s.classes, { seenInTestFile: s.seenInTestFile }),
+        copies: s.copies,
+        subagentCopies: s.subagentCopies,
+        sessions: s.sessions.size,
+        projects: [...s.projects],
+        where: s.where,
+        firstSeen: Number.isFinite(s.first.ts) ? new Date(s.first.ts).toISOString() : null,
+        origin: s.first.origin,
+      })).sort((a, b) => b.copies - a.copies);
+    },
+  };
+}
+
+// Convenience wrapper: run the secrets analyzer alone over a list of transcript files.
+export async function auditSecrets({ root, files, rules }) {
+  const { runAnalyzers } = await import('../run.mjs');
+  const [secrets] = await runAnalyzers({ root, files, analyzers: [createSecretsAnalyzer(rules)] });
+  return secrets;
 }
