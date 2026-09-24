@@ -39,6 +39,13 @@ const user = (text, ts) => ({ type: 'user', timestamp: ts, message: { role: 'use
 const toolUse = (id, name, input, ts) => ({ type: 'assistant', timestamp: ts, message: { role: 'assistant', content: [{ type: 'tool_use', id, name, input }] } });
 const toolResult = (id, content, ts) => ({ type: 'user', timestamp: ts, message: { role: 'user', content: [{ type: 'tool_result', tool_use_id: id, content }] } });
 
+test('converted rules use only regex syntax that Node 20 supports', () => {
+  const data = JSON.parse(fs.readFileSync(path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../vendor/gitleaks.rules.json'), 'utf8'));
+  const all = [...data.rules.map((r) => r.regex), ...data.globalAllowlist.regexes, ...data.rules.flatMap((r) => r.allowlists.flatMap((a) => a.regexes))];
+  // Inline modifiers such as (?i) (?i:...) (?-i:...) only compile on Node >= 23.
+  for (const r of all) assert.ok(!/\(\?-?[ims]+[:)]/.test(r.source), `non-portable modifier in: ${r.source.slice(0, 80)}`);
+});
+
 test('detects a GitHub token and a Linear key', () => {
   assert.equal(scanText(rules, `export GITHUB_TOKEN=${GITHUB}`)[0].ruleId, 'github-pat');
   assert.equal(scanText(rules, `setx LINEAR_API_KEY "${LINEAR}"`)[0].ruleId, 'linear-api-key');

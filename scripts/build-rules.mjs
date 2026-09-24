@@ -4,6 +4,8 @@
 // Go's RE2 and JavaScript differ in a few places. Conversions applied:
 //   (?i) / (?i:...)        -> the whole regex becomes case-insensitive ("i" flag). This can only
 //                             widen a match, never lose one, so recall is preserved.
+//   (?-i:...) / (?-i)      -> dropped: the group simply stays case-insensitive. Inline modifier
+//                             groups only exist in Node >= 23, and widening keeps recall.
 //   (?s) / (?m)            -> "s" / "m" flags
 //   (?P<name>              -> (?<name>
 //   \A  \z                 -> ^  $
@@ -97,6 +99,7 @@ export function convertRegex(src) {
   let re = src;
   re = re.replace(/\(\?([ims]+)\)/g, (_, f) => { for (const c of f) flags.add(c); return ''; });
   re = re.replace(/\(\?([ims]+):/g, (_, f) => { for (const c of f) flags.add(c); return '(?:'; });
+  re = re.replace(/\(\?-[ims]+:/g, '(?:').replace(/\(\?-[ims]+\)/g, '');
   re = re.replace(/\(\?P</g, '(?<');
   re = re.replace(/\\A/g, '^').replace(/\\z/g, '$');
   re = re.replace(/\[:(\w+):\]/g, (all, name) => POSIX[name] ?? all);
