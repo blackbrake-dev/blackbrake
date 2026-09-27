@@ -11,14 +11,19 @@ const KNOWN_EXAMPLES = new Set([
 ]);
 
 const EXAMPLE_WORDS = /\b(fake|falso|falsa|dummy|example|ejemplo|sample|placeholder|mock(ed)?|fixture|lorem|not[- ]a[- ]real|for testing|de prueba|test(ing)?[-_ ]?(key|token|secret)|sk_test_|pk_test_)\b/i;
+
 const EXAMPLE_PATHS = /(^|[\\/])(tests?|__tests__|spec|specs|fixtures?|examples?|samples?|docs?|testdata|mocks?)([\\/]|$)|\.(example|sample|template|dist)(\b|$)|\.(test|spec)\.[a-z]+\b/i;
+
 const LOCAL_HOSTS = /\b(localhost|127\.0\.0\.1|0\.0\.0\.0|\[::1\])\b/i;
+
 // Test code around the value: assertions and test declarations.
 const TEST_CODE = /\b(assert\w*|expect|describe|it|test)\s*\(/;
+
 // The "secret" is itself source code (an expression), not a value.
 const CODE_EXPRESSION = /\?\.|\|\||&&|=>|\(\)|\bprocess\.env\b|\$\{/;
 
 export const isTestPath = (p) => Boolean(p) && EXAMPLE_PATHS.test(p);
+
 const WINDOW = 200;
 
 export const CLASSES = {
@@ -27,18 +32,50 @@ export const CLASSES = {
   local: 'local-dev',
 };
 
+// Judged on the value alone, never on the words around it. guard uses only this: around a live
+// prompt or tool call, "example" or a tests/ path nearby is easy to arrange (a URL like
+// fake-cdn.net/?t=<key>) and common by accident (a .env starting with "# example config").
+// Placeholder words count only as whole words (a random token can contain "sample" by chance), and
+// runs of x or * only when they make up the value after a short service prefix.
+const PLACEHOLDER = /(^|[^a-z0-9])(example|sample|dummy|placeholder|changeme|redacted|your[_-]?(api[_-]?)?(secret|token|key))([^a-z0-9]|$)|^[\w-]{0,12}?(x{6,}|\*{4,}|•{4,})[\w-]{0,4}$|^<.*>$|^\$\{.*\}$/i;
+
+export function isExampleValue(secret) {
+  if (KNOWN_EXAMPLES.has(secret)) return true;
+
+  if (/^(sk|pk|rk)_test_/.test(secret)) return true;
+
+  if (CODE_EXPRESSION.test(secret)) return true;
+
+  if (/^["'`]?[A-Za-z_-]{1,16}["'`]?$/.test(secret)) return true;
+
+  if (PLACEHOLDER.test(secret)) return true;
+
+  // AWS documents its sample keys with this suffix (AKIA… ending in EXAMPLE).
+  if (/EXAMPLE(KEY)?$/.test(secret)) return true;
+
+  // Almost no variety (an AWS key id made of one repeated letter): typed by hand, not generated.
+  return new Set(secret).size < 6;
+}
+
 // Classifies one occurrence using the text around it and, when known, the file the agent was
 // reading or writing.
 export function classifyOccurrence({ secret, text, index, filePath }) {
   if (KNOWN_EXAMPLES.has(secret)) return CLASSES.example;
+
   if (/^(sk|pk|rk)_test_/.test(secret)) return CLASSES.example;
+
   if (CODE_EXPRESSION.test(secret)) return CLASSES.example;
+
   // A short value made only of letters ("password", "changeme", "secret") is a word, not a key.
   if (/^["'`]?[A-Za-z_-]{1,16}["'`]?$/.test(secret)) return CLASSES.example;
   const around = text.slice(Math.max(0, index - WINDOW), Math.min(text.length, index + secret.length + WINDOW));
+
   if (EXAMPLE_WORDS.test(around) || TEST_CODE.test(around)) return CLASSES.example;
+
   if ((filePath && EXAMPLE_PATHS.test(filePath)) || EXAMPLE_PATHS.test(around)) return CLASSES.example;
+
   if (LOCAL_HOSTS.test(around)) return CLASSES.local;
+
   return CLASSES.real;
 }
 
@@ -48,12 +85,18 @@ export function classifyOccurrence({ secret, text, index, filePath }) {
 // A value that was ever written into, or read from, a test/fixture/example file is treated as a
 // fixture: real credentials do not normally live in test files, and when they do, the scanner the
 // project already runs on its repository is the right place to catch them.
-export function classifySecret(occurrenceClasses, { seenInTestFile = false } = {}) {
-  if (seenInTestFile) return CLASSES.example;
+// Exception: a value the user pasted into a prompt is theirs. An agent later copying it into a test
+// file or next to the word "example" must not hide it; only a majority of example contexts does.
+export function classifySecret(occurrenceClasses, { seenInTestFile = false, pastedByUser = false } = {}) {
+  if (seenInTestFile && !pastedByUser) return CLASSES.example;
   const n = occurrenceClasses.length;
+
   if (n === 0) return CLASSES.real;
   const count = (c) => occurrenceClasses.filter((x) => x === c).length;
-  if (count(CLASSES.example) / n >= 1 / 3) return CLASSES.example;
+
+  if (count(CLASSES.example) / n >= (pastedByUser ? 1 / 2 : 1 / 3)) return CLASSES.example;
+
   if (count(CLASSES.local) / n >= 1 / 2) return CLASSES.local;
+
   return CLASSES.real;
 }

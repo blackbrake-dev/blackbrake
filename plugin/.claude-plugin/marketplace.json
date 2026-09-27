@@ -1,0 +1,12 @@
+{
+  "name": "blackbrake",
+  "owner": { "name": "blackbrake", "url": "https://blackbrake.dev" },
+  "metadata": { "description": "Local marketplace written by `blackbrake setup`. Holds only the blackbrake guard plugin." },
+  "plugins": [
+    {
+      "name": "blackbrake",
+      "source": "./blackbrake",
+      "description": "Guard for Claude Code: warns about (observe) or stops (protect) secrets in your prompts and tool output, and risky reads. Local only, no network."
+    }
+  ]
+}

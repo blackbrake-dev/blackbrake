@@ -1,0 +1,8 @@
+{
+  "name": "blackbrake",
+  "description": "Guard for Claude Code: warns about (observe) or stops (protect) secrets in your prompts and tool output, and risky reads. Local only, no network.",
+  "author": { "name": "blackbrake", "url": "https://blackbrake.dev" },
+  "homepage": "https://blackbrake.dev",
+  "repository": "https://github.com/blackbrake-dev/blackbrake",
+  "license": "Apache-2.0"
+}

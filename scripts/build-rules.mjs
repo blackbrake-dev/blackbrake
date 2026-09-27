@@ -65,7 +65,13 @@ function parseGitleaksToml(text) {
     const m = line.match(/^([A-Za-z]+)\s*=\s*(.*)$/);
     if (!m || !target) continue;
     const [, key, rest] = m;
-    if (rest.startsWith('[')) {
+    if (rest.startsWith("'''") && rest.indexOf("'''", 3) === -1) {
+      // Multi-line literal string (betterleaks filters and validators).
+      let buf = rest.slice(3);
+      while (i < lines.length && !lines[i].includes("'''")) buf += '\n' + lines[i++];
+      if (i < lines.length) buf += '\n' + lines[i++].split("'''")[0];
+      target[key] = buf;
+    } else if (rest.startsWith('[')) {
       // Array, possibly spanning several lines.
       let buf = rest;
       while (!/\]\s*(#.*)?$/.test(buf.trim())) buf += '\n' + lines[i++];
@@ -125,6 +131,7 @@ for (const r of doc.rules) {
   try { regex = convertRegex(r.regex); } catch (e) { dropped.push({ where: r.id, regex: r.regex, error: e.message }); continue; }
   rules.push({
     id: r.id,
+    source: 'gitleaks',
     description: r.description ?? '',
     regex,
     keywords: (r.keywords ?? []).map((k) => k.toLowerCase()),
@@ -139,11 +146,41 @@ for (const r of doc.rules) {
   });
 }
 
+// Betterleaks (MIT, by the gitleaks author) adds rules gitleaks does not have, many for AI
+// providers (OpenRouter, DeepSeek, Groq, xAI, Mistral, Gemini, Cursor, Supabase…). Only rules with
+// a new id are taken; gitleaks keeps the shared ones. From each: regex, keywords, and the entropy
+// floor of its Expr filter. Not taken: other Expr filters, live validation (network: never, N0),
+// multi-part rules and skipReport helpers.
+const BL = path.join(root, 'vendor/src/betterleaks.toml');
+const BL_COMMIT = process.env.BETTERLEAKS_COMMIT ?? 'unknown';
+let fromBetterleaks = 0;
+if (fs.existsSync(BL)) {
+  const known = new Set(rules.map((r) => r.id));
+  for (const r of parseGitleaksToml(fs.readFileSync(BL, 'utf8')).rules) {
+    if (!r.regex || known.has(r.id) || r.components || r.skipReport === 'true' || r.skipReport === true) continue;
+    let regex;
+    try { regex = convertRegex(r.regex); } catch (e) { dropped.push({ where: `betterleaks:${r.id}`, regex: r.regex, error: e.message }); continue; }
+    const floor = /entropy\(finding\["secret"\]\)\s*<=?\s*([\d.]+)/.exec(r.filter ?? '');
+    rules.push({
+      id: r.id,
+      source: 'betterleaks',
+      description: r.description ?? '',
+      regex,
+      keywords: (r.keywords ?? []).map((k) => k.toLowerCase()),
+      entropy: floor ? Number.parseFloat(floor[1]) + 0.001 : null,
+      secretGroup: typeof r.secretGroup === 'number' ? r.secretGroup : null,
+      allowlists: [],
+    });
+    fromBetterleaks++;
+  }
+}
+
 const out = {
-  source: 'gitleaks default config (config/gitleaks.toml)',
+  source: 'gitleaks default config (config/gitleaks.toml) + new rules from betterleaks (config/betterleaks.toml)',
   upstream: 'https://github.com/gitleaks/gitleaks',
   upstreamCommit: UPSTREAM_COMMIT,
-  license: 'MIT, Copyright (c) 2019 Zachary Rice. See THIRD_PARTY_NOTICES.',
+  betterleaksCommit: BL_COMMIT,
+  license: 'MIT, Copyright (c) 2019 Zachary Rice (gitleaks); MIT, Copyright (c) 2026 Zachary Rice (betterleaks). See THIRD_PARTY_NOTICES.',
   generated: new Date().toISOString().slice(0, 10),
   globalAllowlist: {
     regexes: convertList(doc.allowlist.regexes, dropped, 'global.allowlist'),
@@ -153,5 +190,5 @@ const out = {
   dropped,
 };
 fs.writeFileSync(OUT, JSON.stringify(out, null, 1) + '\n');
-console.log(`rules: ${rules.length} converted, ${dropped.length} regexes dropped`);
+console.log(`rules: ${rules.length} converted (${fromBetterleaks} from betterleaks), ${dropped.length} regexes dropped`);
 for (const d of dropped) console.log(`  dropped ${d.where}: ${d.error}`);

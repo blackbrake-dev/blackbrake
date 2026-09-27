@@ -3,14 +3,22 @@
 // Episode = one prompt written by the user plus all agent work until the next one. Subagent
 // work is attributed to the episode that was open in the parent session when it started.
 // Harness-injected messages (subagent hand-backs, skill bodies) do not open episodes.
+//
+// Claude Code writes one response as several lines (one per content block, plus streaming
+// snapshots), all with the same message id and usage. Each response is counted once, using its
+// largest snapshot; counting lines inflated spend about 2x on the author's data.
 import { isHarnessText } from '../transcripts.mjs';
-import { priceFor, usageCost } from './prices.mjs';
+import { priceFor, usageCost, usageSize } from './prices.mjs';
+
+const toolUses = (msg) => (Array.isArray(msg.content) ? msg.content : []).filter((b) => b?.type === 'tool_use');
 
 const userPromptText = (msg) => {
   if (msg?.role !== 'user') return null;
   const blocks = Array.isArray(msg.content) ? msg.content : [{ type: 'text', text: msg.content }];
+
   if (blocks.some((b) => b?.type === 'tool_result')) return null;
   const text = blocks.filter((b) => b?.type === 'text' && typeof b.text === 'string').map((b) => b.text).join('\n').trim();
+
   return text && !isHarnessText(text) ? text : null;
 };
 
@@ -18,13 +26,42 @@ export function createCostAnalyzer() {
   const sessions = new Map(); // session -> { project, episodes: [], turns, minInput, crSum, cost }
   const subagentRuns = [];    // { session, startTs, cost, turns, tools }
   const unknownModels = new Set();
+  const responses = new Map(); // response key -> { size, cost, targets }
+  const toolIds = new Set();
   let file = null;
   let current = null;         // current file accumulator
   let episode = null;
 
   const session = (id, project) => {
     if (!sessions.has(id)) sessions.set(id, { id, project, episodes: [], turns: 0, minInput: Infinity, crSum: 0, cost: 0 });
+
     return sessions.get(id);
+  };
+
+  // New tool calls in this line (blocks are counted once, whatever line they appear on).
+  const newTools = (msg) => toolUses(msg).filter((b) => !b.id || (!toolIds.has(b.id) && toolIds.add(b.id))).length;
+
+  // Returns true the first time a response is seen. A later, larger snapshot of the same response
+  // corrects the cost already added to its accumulators.
+  const account = (record, msg, cost, targets) => {
+    const key = msg.id ?? record.requestId ?? null;
+    const size = usageSize(msg.usage);
+    const prev = key ? responses.get(key) : null;
+
+    if (!prev) {
+      if (key) responses.set(key, { size, cost, targets });
+
+      for (const t of targets) t.cost += cost;
+
+      return true;
+    }
+
+    if (size > prev.size) {
+      for (const t of prev.targets) t.cost += cost - prev.cost;
+      Object.assign(prev, { size, cost });
+    }
+
+    return false;
   };
 
   return {
@@ -32,54 +69,68 @@ export function createCostAnalyzer() {
       file = info;
       episode = null;
       current = info.isSubagent ? { session: info.session, startTs: null, cost: 0, turns: 0, tools: 0 } : null;
+
       if (current) subagentRuns.push(current);
       else session(info.session, info.project);
     },
     onRecord(record) {
       const msg = record.message;
+
       if (!msg) return;
       const ts = record.timestamp ? Date.parse(record.timestamp) : null;
+
       if (current) {
         if (current.startTs === null && ts) current.startTs = ts;
+
         if (msg.role === 'assistant' && msg.usage) {
-          current.cost += usageCost(msg.usage, msg.model);
-          current.turns++;
-          current.tools += (Array.isArray(msg.content) ? msg.content : []).filter((b) => b?.type === 'tool_use').length;
+          if (account(record, msg, usageCost(msg.usage, msg.model), [current])) current.turns++;
+          current.tools += newTools(msg);
         }
+
         return;
       }
+
       const s = session(file.session, file.project);
       const prompt = userPromptText(msg);
+
       if (prompt) {
         episode = { session: s.id, project: s.project, start: ts, end: ts, cost: 0, turns: 0, tools: 0, subagents: 0 };
         s.episodes.push(episode);
+
         return;
       }
+
       if (msg.role !== 'assistant' || !msg.usage) return;
       const u = msg.usage;
       const p = priceFor(msg.model);
+
       // "<synthetic>" marks messages generated locally by the harness; they carry no cost.
       if (!p.known && msg.model && !msg.model.startsWith('<')) unknownModels.add(msg.model);
-      const c = usageCost(u, msg.model);
+
+      if (!episode) { episode = { session: s.id, project: s.project, start: ts, end: ts, cost: 0, turns: 0, tools: 0, subagents: 0 }; s.episodes.push(episode); }
+
+      episode.end = ts ?? episode.end;
+      episode.tools += newTools(msg);
+
+      if (!account(record, msg, usageCost(u, msg.model), [s, episode])) return;
       const input = (u.input_tokens || 0) + (u.cache_read_input_tokens || 0) + (u.cache_creation_input_tokens || 0);
       s.turns++;
-      s.cost += c;
       s.crSum += p.cr;
+
       if (input > 0 && input < s.minInput) s.minInput = input;
-      if (!episode) { episode = { session: s.id, project: s.project, start: ts, end: ts, cost: 0, turns: 0, tools: 0, subagents: 0 }; s.episodes.push(episode); }
-      episode.cost += c;
       episode.turns++;
-      episode.end = ts ?? episode.end;
-      episode.tools += (Array.isArray(msg.content) ? msg.content : []).filter((b) => b?.type === 'tool_use').length;
     },
     finish() {
       // Attribute each subagent run to the parent episode open when it started.
       let unattributed = 0;
+
       for (const run of subagentRuns) {
         const eps = sessions.get(run.session)?.episodes ?? [];
         const target = [...eps].reverse().find((e) => e.start !== null && run.startTs !== null && e.start <= run.startTs);
+
         if (target) { target.cost += run.cost; target.tools += run.tools; target.subagents++; } else unattributed += run.cost;
       }
+
       const episodes = [...sessions.values()].flatMap((s) => s.episodes).filter((e) => e.turns > 0 || e.cost > 0);
       const costs = episodes.map((e) => e.cost).sort((a, b) => a - b);
       const total = costs.reduce((a, b) => a + b, 0) + unattributed;
@@ -90,6 +141,7 @@ export function createCostAnalyzer() {
       const floorCost = floors.reduce((a, s) => a + (s.minInput * s.crSum) / 1e6, 0);
       const mainCost = floors.reduce((a, s) => a + s.cost, 0);
       const sortedFloors = floors.map((s) => s.minInput).sort((a, b) => a - b);
+
       return {
         total,
         episodes: episodes.length,

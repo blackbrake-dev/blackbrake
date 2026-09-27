@@ -1,0 +1,23 @@
+{
+  "description": "blackbrake guard: local checks on prompts, tool calls and tool output. Logs counts only, never content.",
+  "hooks": {
+    "SessionStart": [
+      { "matcher": "startup|resume", "hooks": [{ "type": "command", "command": "node", "args": ["${CLAUDE_PLUGIN_ROOT}/app/src/guard/hook.mjs", "SessionStart"], "timeout": 10 }] }
+    ],
+    "UserPromptSubmit": [
+      { "hooks": [{ "type": "command", "command": "node", "args": ["${CLAUDE_PLUGIN_ROOT}/app/src/guard/hook.mjs", "UserPromptSubmit"], "timeout": 10 }] }
+    ],
+    "PreToolUse": [
+      { "matcher": "^(Bash|PowerShell|Read|NotebookRead|Grep|Glob|Write|Edit|MultiEdit|NotebookEdit|WebFetch|WebSearch)$|^mcp__", "hooks": [{ "type": "command", "command": "node", "args": ["${CLAUDE_PLUGIN_ROOT}/app/src/guard/hook.mjs", "PreToolUse"], "timeout": 10 }] }
+    ],
+    "PostToolUse": [
+      { "hooks": [{ "type": "command", "command": "node", "args": ["${CLAUDE_PLUGIN_ROOT}/app/src/guard/hook.mjs", "PostToolUse"], "timeout": 10 }] }
+    ],
+    "PostCompact": [
+      { "hooks": [{ "type": "command", "command": "node", "args": ["${CLAUDE_PLUGIN_ROOT}/app/src/guard/hook.mjs", "PostCompact"], "timeout": 10 }] }
+    ],
+    "SessionEnd": [
+      { "hooks": [{ "type": "command", "command": "node", "args": ["${CLAUDE_PLUGIN_ROOT}/app/src/guard/hook.mjs", "SessionEnd"], "timeout": 5 }] }
+    ]
+  }
+}
