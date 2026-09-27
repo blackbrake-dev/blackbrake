@@ -1,6 +1,6 @@
 {
   "name": "blackbrake",
-  "version": "0.2.0",
+  "version": "0.2.1",
   "description": "Local audit of AI coding agent transcripts (exposed secrets, risky add-ons, where spend concentrates) and a guard for Claude Code. No network, no dependencies.",
   "type": "module",
   "bin": {

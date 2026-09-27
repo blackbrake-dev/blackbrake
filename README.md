@@ -3,8 +3,17 @@
 **See what your AI coding agent has exposed. Locally, read-only, in one command.**
 
 ```
-npx blackbrake audit
+npm install -g blackbrake
+blackbrake
 ```
+
+Install it once and open it from any folder by typing `blackbrake`, like `claude` or `gemini`. It
+installs one package with no dependencies and no install scripts, published with npm provenance
+(`npm audit signatures` verifies it). To try it without installing anything: `npx blackbrake`
+(or `npx blackbrake audit` for the report alone). Update with `npm install -g blackbrake@latest`,
+then run `blackbrake setup` so guard's own copy (`~/.blackbrake/app`) is refreshed too
+(`blackbrake status` tells you if it is out of date). To remove it: `blackbrake uninstall` first
+(add `--purge` to also delete `~/.blackbrake`: log, state and backups), then `npm uninstall -g blackbrake`.
 
 ## What it does NOT do
 

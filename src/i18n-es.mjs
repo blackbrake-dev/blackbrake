@@ -399,6 +399,8 @@ export const ES = {
   language: 'idioma',
   'Lowering protection and removing blackbrake need you to type a word in a terminal: an agent cannot do it.': 'Bajar la protección y quitar blackbrake exigen que escribas una palabra en una terminal: un agente no puede hacerlo.',
   'Everything stays on this machine. blackbrake --help lists every option.': 'Todo se queda en este equipo. blackbrake --help lista todas las opciones.',
+  'Open it from any folder with just "blackbrake": install it once with npm install -g blackbrake': 'Ábrelo desde cualquier carpeta con solo "blackbrake": instálalo una vez con npm install -g blackbrake',
+  'Open me from any folder with just "blackbrake": npm install -g blackbrake': 'Ábreme desde cualquier carpeta con solo "blackbrake": npm install -g blackbrake',
   'Scan every harness for secrets': 'Escanear todas las herramientas en busca de secretos',
   'Scan {name} for secrets': 'Escanear {name} en busca de secretos',
   'Remove blackbrake from {name}': 'Quitar blackbrake de {name}',

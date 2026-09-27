@@ -43,6 +43,9 @@ const pkg = JSON.parse(fs.readFileSync(path.resolve(path.dirname(fileURLToPath(i
 
 const HELP_ES = `blackbrake ${pkg.version} — mira qué ha expuesto, qué carga y qué gasta tu agente de IA. En local.
 
+Instálalo una vez y ábrelo desde cualquier carpeta con solo "blackbrake":
+  npm install -g blackbrake     (o sin instalar nada: npx blackbrake)
+
 Uso:
   blackbrake                    Pantalla de inicio (en una terminal interactiva)
   blackbrake audit [--details] [--advice] [--all] [--json] [--path <dir>] [--home <dir>]
@@ -84,6 +87,9 @@ El color sigue a tu terminal; NO_COLOR=1 lo desactiva.
 blackbrake no abre conexiones de red. audit solo lee; guard solo escribe en ~/.blackbrake.`;
 
 const HELP = `blackbrake ${pkg.version} — see what your AI coding agent has exposed, loads and spends. Locally.
+
+Install once, then open it from any folder with just "blackbrake":
+  npm install -g blackbrake     (or run it without installing: npx blackbrake)
 
 Usage:
   blackbrake                    Home screen (in an interactive terminal)
@@ -613,8 +619,15 @@ function helpScreen(p) {
     '',
     `  ${p.faint(t('Lowering protection and removing blackbrake need you to type a word in a terminal: an agent cannot do it.'))}`,
     `  ${p.faint(t('Everything stays on this machine. blackbrake --help lists every option.'))}`,
+    ...(viaNpx() ? [`  ${p.amber(t('Open it from any folder with just "blackbrake": install it once with npm install -g blackbrake'))}`] : []),
     '',
   ];
+}
+
+// Run through npx (npm sets npm_command=exec; the package sits in npm's _npx cache): each start
+// downloads or checks the package again. Installed globally it opens with just "blackbrake".
+function viaNpx() {
+  return process.env.npm_command === 'exec' || /[\\/]_npx[\\/]/.test(fileURLToPath(import.meta.url));
 }
 
 // ---------- permissions: which harnesses, which mode, what blackbrake may do ----------
@@ -901,6 +914,8 @@ function tip(p, state) {
   if (scan?.real) return say(p, 'alert', t('{n} real secret(s) in {where} at the last scan. Rotate them, then delete the copies.', { n: scan.real, where: scan.where }));
 
   if (auditRun?.real) return say(p, 'alert', t('{n} real secret(s) in Claude Code at the last audit. See the precautions in "Audit".', { n: auditRun.real }));
+
+  if (viaNpx()) return say(p, 'wink', t('Open me from any folder with just "blackbrake": npm install -g blackbrake'));
 
   if (!scan) return say(p, 'idle', t('Scan your AI harnesses once, from "Audit": it takes a few seconds.'));
 
