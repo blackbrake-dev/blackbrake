@@ -103,9 +103,10 @@ test('an installed copy ignores a BLACKBRAKE_HOME that points elsewhere', async 
   fs.mkdirSync(path.join(app, 'src', 'guard'), { recursive: true });
   fs.writeFileSync(path.join(app, 'package.json'), '{"name":"blackbrake-guard"}');
   const hook = pathToFileURL(path.join(app, 'src', 'guard', 'hook.mjs')).href;
-  assert.equal(trustedHome(hook, { BLACKBRAKE_HOME: 'C:\\repo\\bb' }), path.join(HOME, '.blackbrake'));
+  assert.equal(trustedHome(hook, { BLACKBRAKE_HOME: path.join(os.tmpdir(), 'repo', 'bb') }), path.join(HOME, '.blackbrake'));
   assert.equal(trustedHome(hook, { BLACKBRAKE_HOME: path.dirname(app) }), path.dirname(app), 'its own folder is fine');
-  assert.equal(trustedHome(pathToFileURL(path.join(ROOT, 'src', 'guard', 'hook.mjs')).href, { BLACKBRAKE_HOME: 'C:\\x' }), 'C:\\x', 'the package itself (development, tests)');
+  const dev = path.join(os.tmpdir(), 'bb-dev-home');
+  assert.equal(trustedHome(pathToFileURL(path.join(ROOT, 'src', 'guard', 'hook.mjs')).href, { BLACKBRAKE_HOME: dev }), dev, 'the package itself (development, tests)');
 });
 
 test('state writes replace a planted hard link instead of writing through it', async () => {

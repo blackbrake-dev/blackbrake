@@ -49,7 +49,9 @@ export function assertNoLinks(target) {
 
     try { st = fs.lstatSync(p); } catch { /* not created yet */ }
 
-    if (st?.isSymbolicLink()) throw new Error(`Refusing to use ${abs}: ${p} is a symbolic link or junction.`);
+    // A link owned by root on macOS or Linux (/var -> /private/var, /tmp on some systems) is part of
+    // the system: a process running as the user cannot create or change it.
+    if (st?.isSymbolicLink() && !(process.platform !== 'win32' && st.uid === 0)) throw new Error(`Refusing to use ${abs}: ${p} is a symbolic link or junction.`);
 
     if (p === path.dirname(p)) break;
   }

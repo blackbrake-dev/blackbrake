@@ -77,7 +77,7 @@ export function windowEnv(env = process.env, home = null) {
 }
 
 // Called from the hook on every event; cheap when there is nothing to do.
-export function maybeOpenWindow(sessionId, { home = guardHome(), env = process.env, cli, spawner = spawn } = {}) {
+export function maybeOpenWindow(sessionId, { home = guardHome(), env = process.env, cli, spawner = spawn, command = windowCommand } = {}) {
   // The user's setting decides; an agent that sets CI for its tools does not hide the window.
   // BLACKBRAKE_NO_WINDOW is for blackbrake's own tests (an agent writing it into its settings is
   // refused by guard as tampering).
@@ -100,7 +100,7 @@ export function maybeOpenWindow(sessionId, { home = guardHome(), env = process.e
   try { fs.writeFileSync(claim, String(process.pid), { flag: 'wx', mode: 0o600 }); } catch { return false; }
 
   setSession(sessionId, { windowOpened: new Date().toISOString() }, home);
-  const c = windowCommand(process.execPath, cli);
+  const c = command(process.execPath, cli);
 
   if (!c) return false;
 

@@ -94,13 +94,15 @@ test('the alerts window opens once per session, never twice at once, and can be 
 
  return { on() {}, unref() {} }; };
 
+  // The terminal to open is given: a CI runner may have none installed.
+  const command = (node, cli) => ({ file: '/usr/bin/some-terminal', args: [node, cli, 'watch'] });
   const env = { DISPLAY: ':0' };
-  assert.equal(maybeOpenWindow('s1', { home, env, cli: '/h/watch-main.mjs', spawner }), true);
-  assert.equal(maybeOpenWindow('s1', { home, env, cli: '/h/watch-main.mjs', spawner }), false, 'same session');
-  assert.equal(maybeOpenWindow('s2', { home, env, cli: '/h/watch-main.mjs', spawner }), false, 'another hook right after: the claim is recent');
+  assert.equal(maybeOpenWindow('s1', { home, env, cli: '/h/watch-main.mjs', spawner, command }), true);
+  assert.equal(maybeOpenWindow('s1', { home, env, cli: '/h/watch-main.mjs', spawner, command }), false, 'same session');
+  assert.equal(maybeOpenWindow('s2', { home, env, cli: '/h/watch-main.mjs', spawner, command }), false, 'another hook right after: the claim is recent');
   assert.equal(calls.length, 1);
   setSetting('window', false, home);
   fs.rmSync(path.join(home, 'window.claim'));
-  assert.equal(maybeOpenWindow('s3', { home, env, cli: '/h/watch-main.mjs', spawner }), false, 'off');
-  assert.equal(maybeOpenWindow('s4', { home: tmp(), env: { CI: '1', DISPLAY: ':0' }, cli: '/h/w.mjs', spawner }), true, 'an agent setting CI for its tools does not hide the window');
+  assert.equal(maybeOpenWindow('s3', { home, env, cli: '/h/watch-main.mjs', spawner, command }), false, 'off');
+  assert.equal(maybeOpenWindow('s4', { home: tmp(), env: { CI: '1', DISPLAY: ':0' }, cli: '/h/w.mjs', spawner, command }), true, 'an agent setting CI for its tools does not hide the window');
 });
