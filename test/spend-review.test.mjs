@@ -157,7 +157,7 @@ test('corrupt-spend-state-never-changes-a-security-decision', () => {
 
   assert.equal(clean.hookSpecificOutput.permissionDecision, 'ask');
 
-  for (const transcriptPath of [undefined, (c) => path.join(c, 'projects'), (c) => path.join(c, 'projects', 'fixture', 'missing.jsonl'), () => '\\fixture-host\share\s.jsonl', () => 'relative.jsonl']) {
+  for (const transcriptPath of [undefined, (c) => path.join(c, 'projects'), (c) => path.join(c, 'projects', 'fixture', 'missing.jsonl'), () => '\\\\fixture-host\\share\\s.jsonl', () => 'relative.jsonl']) {
     assert.deepEqual(decide(true, transcriptPath), clean);
     assert.deepEqual(decide(false, transcriptPath), clean);
   }
