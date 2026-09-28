@@ -65,6 +65,9 @@ export async function applySpendEvent({ session, event, input, harness, adapter,
     spendChanged = true;
   }
 
+  // Only a PreToolUse answer can ask; elsewhere a protect alert waits for the next tool call.
+  const canAsk = Boolean(adapter.spendAsk) && event === 'PreToolUse';
+
   if (event === 'PreToolUse' && spend.open) {
     const now = Date.now();
     const detector = createLoopDetector({ secret: spendSecret(), snapshot: readLoopSnapshot(input.session_id, home, now) });
@@ -75,13 +78,13 @@ export async function applySpendEvent({ session, event, input, harness, adapter,
     if (repeated.alert) {
       const message = t('blackbrake: the same call was requested 3 times in 2 minutes. It may be a loop; continue?');
 
-      notices.push({ action: mode === 'protect' && adapter.spendAsk ? 'ask' : 'warn', message });
-      spendLog.push({ ev: event, kind: 'spend-loop', action: mode === 'protect' && adapter.spendAsk ? 'asked' : 'warned', fingerprint: repeated.fingerprint.slice(0, 16) });
+      notices.push({ action: mode === 'protect' && canAsk ? 'ask' : 'warn', message });
+      spendLog.push({ ev: event, kind: 'spend-loop', action: mode === 'protect' && canAsk ? 'asked' : 'warned', fingerprint: repeated.fingerprint.slice(0, 16) });
     }
   }
 
-  if (spend.open && adapter.spendCost) {
-    const alert = spendAlert({ baseline: getSpendBaseline(harness, home), episode: spend.open, mode, canAsk: adapter.spendAsk });
+  if (spend.open && adapter.spendCost && (canAsk || !(mode === 'protect' && adapter.spendAsk))) {
+    const alert = spendAlert({ baseline: getSpendBaseline(harness, home), episode: spend.open, mode, canAsk });
 
     if (alert) {
       notices.push(alert);
@@ -102,7 +105,7 @@ export async function applySpendEvent({ session, event, input, harness, adapter,
   if (!(ask || withinTokenBudget(message, spend.open?.tokens))) return { output, log: nextLog };
 
   const nextOutput = ask
-    ? { ...output, hookSpecificOutput: { ...output?.hookSpecificOutput, hookEventName: event, permissionDecision: 'ask', permissionDecisionReason: message } }
+    ? { ...output, hookSpecificOutput: { ...output?.hookSpecificOutput, hookEventName: event, permissionDecision: 'ask', permissionDecisionReason: [output?.hookSpecificOutput?.permissionDecisionReason, message].filter(Boolean).join(' ') } }
     : { ...output, systemMessage: [output?.systemMessage, message].filter(Boolean).join(' ') };
 
   return { output: nextOutput, log: nextLog };
