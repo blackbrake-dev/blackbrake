@@ -174,6 +174,7 @@ export function createCostAnalyzer() {
       return {
         total,
         episodes: episodes.length,
+        episodeCosts: episodes.map((e) => ({ cost: e.cost, responses: e.turns })),
         p50: q(0.5),
         p90: q(0.9),
         topShare,
