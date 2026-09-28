@@ -6,9 +6,7 @@ import { spawn } from 'node:child_process';
 import fs from 'node:fs';
 import path from 'node:path';
 import readline from 'node:readline';
-import { summarizeHistory } from '../cost/live.mjs';
 import { t } from '../i18n.mjs';
-import { inventoryDelta, inventoryDigest } from '../load/inventory.mjs';
 import { clean } from '../text.mjs';
 import { defaultRoot } from '../transcripts.mjs';
 import { mini, motionAllowed, padEnd, screen } from '../ui/term.mjs';
@@ -19,14 +17,18 @@ import { systemProgram } from './window.mjs';
 
 export const LEVELS = ['low', 'medium', 'high', 'critical'];
 
+// The hook loads this module (through window.mjs) on every event: history and inventory code is
+// imported only when the watcher actually refreshes, never on the security path.
 export async function ensureSpendBaseline({ home = guardHome(), root = defaultRoot() } = {}) {
+  const { summarizeHistory } = await import('../cost/live.mjs');
   const summary = await summarizeHistory({ root, harness: 'claude' });
   setSpendBaseline('claude', summary.baseline, home);
 
   return summary;
 }
 
-export function ensureInventoryDelta({ home = guardHome(), userHome } = {}) {
+export async function ensureInventoryDelta({ home = guardHome(), userHome } = {}) {
+  const { inventoryDelta, inventoryDigest } = await import('../load/inventory.mjs');
   const previous = getInventorySnapshot(home);
   const current = inventoryDigest({ home: userHome, secret: getSpendSecret(home) });
   const delta = inventoryDelta(previous, current);
@@ -380,7 +382,7 @@ export async function watch(p, { home = guardHome(), out = process.stdout, inter
   if (path.resolve(home) === path.resolve(guardHome())) {
     try { await ensureSpendBaseline({ home }); } catch { /* no readable history means no threshold */ }
 
-    try { ensureInventoryDelta({ home }); } catch { /* an unavailable inventory does not stop alerts */ }
+    try { await ensureInventoryDelta({ home }); } catch { /* an unavailable inventory does not stop alerts */ }
   }
 
   const tail = createTail(home);
