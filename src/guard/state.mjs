@@ -49,7 +49,22 @@ const readJson = (f) => { try { return JSON.parse(fs.readFileSync(f, 'utf8')); }
 // for some other file) in place of state.json, a log or a pid file is removed first (only that name;
 // the file it pointed at is untouched). Whole files are written to a fresh temporary name and renamed.
 export function writePrivate(file, text, flag = 'w') {
-  fs.mkdirSync(path.dirname(file), { recursive: true, mode: 0o700 });
+  const parent = path.resolve(path.dirname(file));
+  const root = path.parse(parent).root;
+  let current = root;
+
+  // Checking from the root prevents even stat/mkdir from traversing a planted parent link.
+  for (const part of path.relative(root, parent).split(path.sep).filter(Boolean)) {
+    current = path.join(current, part);
+    let st;
+
+    try { st = fs.lstatSync(current); } catch (e) { if (e.code !== 'ENOENT') throw e; }
+
+    // System-owned top-level links such as /var -> /private/var are not agent-controlled.
+    if (st?.isSymbolicLink() && !(process.platform !== 'win32' && st.uid === 0 && path.dirname(current) === root)) throw new Error('Refusing a linked state directory');
+  }
+
+  fs.mkdirSync(parent, { recursive: true, mode: 0o700 });
 
   try {
     const st = fs.lstatSync(file);

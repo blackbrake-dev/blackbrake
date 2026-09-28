@@ -72,6 +72,44 @@ export function assertOwnFolder(dir) {
   return abs;
 }
 
+// Whether a folder is the marketplace blackbrake made: a real folder holding its manifest, or what a
+// removal interrupted on Windows leaves behind (a file in use): only guard's own two entries, with
+// guard's own package in them, or nothing at all. Anything else is not touched.
+function ownMarketplace(dest) {
+  const readJson = (f) => { try { return JSON.parse(fs.readFileSync(f, 'utf8')); } catch { return null; } };
+
+  if (fs.lstatSync(dest).isSymbolicLink() || !fs.statSync(dest).isDirectory()) return false;
+  const manifest = readJson(path.join(dest, '.claude-plugin', 'marketplace.json'));
+
+  if (manifest) return manifest.name === MARKETPLACE;
+  const entries = fs.readdirSync(dest);
+
+  if (entries.some((n) => n !== '.claude-plugin' && n !== 'blackbrake')) return false;
+  const files = [];
+
+  const walk = (d) => {
+    for (const e of fs.readdirSync(d, { withFileTypes: true })) {
+      if (e.isSymbolicLink()) files.push('link');
+      else if (e.isDirectory()) walk(path.join(d, e.name));
+      else files.push(e.name);
+    }
+  };
+
+  walk(dest);
+
+  return !files.includes('link') && (files.length === 0 || readJson(path.join(dest, 'blackbrake', 'app', 'package.json'))?.name === 'blackbrake-guard');
+}
+
+// Deletes one of guard's folders. On Windows a file in use (an antivirus scan, the alerts window)
+// can refuse a delete for a moment: retry, then say what to do instead of leaving it half gone.
+export function removeOwn(dir) {
+  try {
+    fs.rmSync(dir, { recursive: true, force: true, maxRetries: 6, retryDelay: 250 });
+  } catch (e) {
+    throw new Error(`Could not delete ${dir} (${e.code ?? 'in use'}): close the blackbrake alerts window and try again.`);
+  }
+}
+
 // Build ~/.blackbrake/marketplace from the package. Returns its path.
 export function buildMarketplace({ home = guardHome(), pkgRoot = PKG_ROOT } = {}) {
   const pkg = JSON.parse(fs.readFileSync(path.join(pkgRoot, 'package.json'), 'utf8'));
@@ -79,13 +117,9 @@ export function buildMarketplace({ home = guardHome(), pkgRoot = PKG_ROOT } = {}
   const dest = path.join(guard, 'marketplace');
 
   if (fs.existsSync(dest)) {
-    // Replace only a marketplace blackbrake made: a real folder holding its marketplace manifest.
-    let name = null;
-
-    try { name = JSON.parse(fs.readFileSync(path.join(dest, '.claude-plugin', 'marketplace.json'), 'utf8')).name; } catch { /* not ours */ }
-
-    if (fs.lstatSync(dest).isSymbolicLink() || name !== MARKETPLACE) throw new Error(`Refusing to replace ${dest}: it is not a marketplace blackbrake made.`);
-    fs.rmSync(dest, { recursive: true, force: true });
+    // Replace only a marketplace blackbrake made.
+    if (!ownMarketplace(dest)) throw new Error(`Refusing to replace ${dest}: it is not a marketplace blackbrake made.`);
+    removeOwn(dest);
   }
 
   copyDir(path.join(pkgRoot, 'plugin'), dest);
@@ -197,7 +231,10 @@ export function uninstall({ keepLog = true, log = () => {} } = {}) {
   const home = assertOwnFolder(guardHome());
   const market = path.join(home, 'marketplace');
 
-  if (fs.existsSync(market) && !fs.lstatSync(market).isSymbolicLink()) fs.rmSync(market, { recursive: true, force: true });
+  // A copy that cannot be deleted right now is left for the next setup, which recognises it.
+  if (fs.existsSync(market) && !fs.lstatSync(market).isSymbolicLink()) {
+    try { removeOwn(market); } catch (e) { log(clean(e.message, 300)); }
+  }
 
   if (!keepLog) {
     // Delete only what guard creates, never a folder with anything else in it.

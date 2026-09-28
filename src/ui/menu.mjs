@@ -96,7 +96,7 @@ export function renderMenu(p, items, index, pose = 'idle', beat = 0) {
 // Checkboxes: items [{ value, label, hint, on, locked }]. Space toggles, "a" toggles all, Enter
 // confirms, q/Esc cancels. Returns { value: boolean } or null (cancelled or no terminal).
 export function renderChecklist(p, items, index, cols = columns(), pose = 'idle') {
-  const labelWidth = Math.max(...items.filter((it) => !it.heading).map((it) => it.label.length)) + 2;
+  const labelWidth = Math.max(...items.filter((it) => !it.heading && !it.proceed).map((it) => it.label.length)) + 2;
   const room = Math.max(10, cols - labelWidth - 8);
   const fit = (s = '') => (s.length > room ? `${s.slice(0, room - 1)}…` : s);
 
@@ -106,6 +106,9 @@ export function renderChecklist(p, items, index, cols = columns(), pose = 'idle'
     const box = it.heading ? '' : it.on ? (p.level ? p.onBand(p.green(' ■ ')) : '■') : p.level ? p.dim(' □ ') : '□';
     const pointer = pointerFor(p, on, pose);
 
+    // The way on, at the top: an orange button; Enter or space on it saves and continues.
+    if (it.proceed) return `  ${pointer} ${p.level ? p.onOrange(p.ink(p.bold(` ▶ ${it.label} `))) : `▶ ${it.label}`}  ${on ? p.amber(it.hint ?? '') : p.faint(it.hint ?? '')}`;
+
     // Section headings: the label on the orange band, like the screens' labels.
     if (it.heading) return p.level ? `\n  ${p.onOrange(p.ink(p.bold(` ${it.label} `)))} ${p.orangeDk('─'.repeat(Math.max(4, cols - it.label.length - 10)))}` : `\n  ${it.label}`;
     const label = on ? p.bold(p.hex('#FFF3E4', 'cream')(padEnd(it.label, labelWidth))) : p.cream(padEnd(it.label, labelWidth));
@@ -114,10 +117,12 @@ export function renderChecklist(p, items, index, cols = columns(), pose = 'idle'
   });
 }
 
-export function checklist(p, items, { input = process.stdin, output = process.stdout } = {}) {
+// `proceed` ({ label, hint }) puts a "continue" button above the list, selected first: Enter or
+// space on it saves, like Enter anywhere.
+export function checklist(p, items, { input = process.stdin, output = process.stdout, proceed = null } = {}) {
   if (!input.isTTY || !output.isTTY) return Promise.resolve(null);
-  const state = items.map((it) => ({ ...it }));
-  const pickable = state.map((it, i) => (it.heading || it.locked ? -1 : i)).filter((i) => i >= 0);
+  const state = [...(proceed ? [{ proceed: true, ...proceed }] : []), ...items.map((it) => ({ ...it }))];
+  const pickable = state.flatMap((it, i) => it.heading || it.locked ? [] : [i]);
   let index = pickable[0];
   let drawn = 0;
   let pose = null;
@@ -161,17 +166,18 @@ export function checklist(p, items, { input = process.stdin, output = process.st
 
       if (key.name === 'up' || key.name === 'k') index = pickable[(pos - 1 + pickable.length) % pickable.length];
       else if (key.name === 'down' || key.name === 'j' || key.name === 'tab') index = pickable[(pos + 1) % pickable.length];
-      else if (key.name === 'space') state[index].on = !state[index].on;
+      else if (key.name === 'space' && !state[index].proceed) state[index].on = !state[index].on;
       else if (key.name === 'a') {
-        const all = pickable.every((i) => state[i].on);
+        const boxes = pickable.filter((i) => !state[i].proceed);
+        const all = boxes.every((i) => state[i].on);
 
-        for (const i of pickable) state[i].on = !all;
-      } else if (key.name === 'return') {
+        for (const i of boxes) state[i].on = !all;
+      } else if (key.name === 'return' || (key.name === 'space' && state[index].proceed)) {
         // The mascot is pleased with the choice.
         pose = 'happy';
         draw();
 
-        return done(Object.fromEntries(state.filter((it) => !it.heading).map((it) => [it.value, Boolean(it.on)])));
+        return done(Object.fromEntries(state.flatMap((it) => it.heading || it.proceed ? [] : [[it.value, Boolean(it.on)]])));
       }
 
       draw();

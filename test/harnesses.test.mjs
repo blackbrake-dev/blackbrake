@@ -128,7 +128,7 @@ test('review: relative and renamed paths, removed hook entries, unknown tools, f
   assert.equal(run('gemini', 'BeforeTool', off, 'observe').json.decision, 'deny', 'hooks.enabled false');
   assert.equal(run('cursor', 'preToolUse', { tool_name: 'Delete', tool_input: { path: path.join(os.homedir(), '.blackbrake', 'state.json') } }, 'observe').json.permission, 'deny', 'delete tool');
   assert.equal(run('codex', 'PreToolUse', { tool_name: 'some_new_tool', tool_input: { target: '~/.blackbrake/state.json' } }, 'observe').json.hookSpecificOutput.permissionDecision, 'deny', 'unknown tool names are checked too');
-  assert.deepEqual(run('cursor', 'beforeSomethingNew', { x: 1 }).json, { permission: 'allow' }, 'a future Cursor permission hook still gets valid JSON');
+  assert.equal(run('cursor', 'beforeSomethingNew', { x: 1 }).json.permission, 'deny', 'an unchecked future permission hook fails closed in protect');
   const warn = run('cursor', 'beforeShellExecution', { command: 'printenv' }, 'observe').json;
   assert.equal(warn.permission, 'allow');
   assert.match(warn.user_message, /environment/, 'observe warnings reach Cursor users');

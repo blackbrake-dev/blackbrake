@@ -68,10 +68,17 @@ test('risky reads and commands: observe warns, protect asks; ordinary work passe
   assert.equal(decide('PreToolUse', write, ctx('protect')).output.hookSpecificOutput.permissionDecision, 'ask');
 
   const rm = { tool_name: 'Bash', tool_input: { command: 'rm -rf build/' } };
-  assert.equal(decide('PreToolUse', rm, ctx('protect')).output, null, 'destructive commands are cc-safety-net territory, except after compaction');
+  // Destructive commands are asked about at any time (hardening round: cc-safety-net does not ship
+  // with blackbrake, and an agent deleting a production database is among the worst real cases).
+  const plain = decide('PreToolUse', rm, ctx('protect'));
+  assert.equal(plain.output.hookSpecificOutput.permissionDecision, 'ask');
+  assert.deepEqual(plain.log.map((e) => e.kind), ['destructive-command']);
+  // Right after a compaction it is said as such (the agent may have lost the detail that made it safe).
   const now = Date.parse('2026-01-01T00:10:00Z');
-  assert.equal(decide('PreToolUse', rm, { ...ctx('protect'), now, compactedAt: '2026-01-01T00:00:00Z' }).output.hookSpecificOutput.permissionDecision, 'ask');
-  assert.equal(decide('PreToolUse', rm, { ...ctx('protect'), now: now + 3600e3, compactedAt: '2026-01-01T00:00:00Z' }).output, null, 'only for a while after the compaction');
+  const after = decide('PreToolUse', rm, { ...ctx('protect'), now, compactedAt: '2026-01-01T00:00:00Z' });
+  assert.equal(after.output.hookSpecificOutput.permissionDecision, 'ask');
+  assert.deepEqual(after.log.map((e) => e.kind), ['destructive-after-compaction']);
+  assert.deepEqual(decide('PreToolUse', rm, { ...ctx('protect'), now: now + 3600e3, compactedAt: '2026-01-01T00:00:00Z' }).log.map((e) => e.kind), ['destructive-command'], 'the compaction weight lasts only a while');
 
   const nb = { tool_name: 'NotebookEdit', tool_input: { notebook_path: '/r/a.ipynb', new_source: `key = "${GITHUB}"` } };
   assert.equal(decide('PreToolUse', nb, ctx('protect')).output.hookSpecificOutput.permissionDecision, 'ask', 'notebooks too');
@@ -103,6 +110,7 @@ test('words or paths around a real secret never make guard ignore it', () => {
 test('messages never carry control characters from agent-controlled paths', () => {
   const read = { tool_name: 'Read', tool_input: { file_path: '/r/\u001b[2J\u001b]52;c;aGk=\u0007/.env' } };
   const msg = decide('PreToolUse', read, ctx('observe')).output.systemMessage;
+  // oxlint-disable-next-line no-control-regex -- Assert that terminal control characters were removed.
   assert.ok(!/[\u0000-\u001f\u007f-\u009f]/.test(msg), JSON.stringify(msg));
 });
 
@@ -202,6 +210,7 @@ test('helpers: sensitive paths, secret dumps, destructive commands, redaction', 
   assert.equal(bashRisk('set -e && npm test'), null);
   assert.ok(isDestructive('git push --force origin main'));
   assert.ok(!isDestructive('git push origin main'));
+  // oxlint-disable-next-line anti-slop/no-shape-in-symbol-names -- The public secret finding schema uses shape for its masked representation.
   assert.equal(redact(`a ${GITHUB} b`, [{ secret: GITHUB, shape: 'X' }]), 'a X b');
 });
 
@@ -232,10 +241,11 @@ test('state: mode defaults to observe; the log keeps types and hashes, never con
   assert.ok(!JSON.stringify(e).includes('session-123'));
 });
 
-test('hook process: reads stdin, answers JSON, logs without content, fails open', () => {
+test('hook process: reads stdin, answers JSON, logs without content, fails closed in protect', () => {
   const home = tmp();
   const env = { ...process.env, BLACKBRAKE_HOME: home, BLACKBRAKE_LANG: 'en', BLACKBRAKE_NO_WINDOW: '1' };
   setMode('protect', home);
+  // oxlint-disable-next-line anti-slop/no-runtime-typeof -- Validate untrusted JSON or assert the boundary contract; preserve primitive type checks.
   const run = (event, input) => spawnSync(process.execPath, [HOOK, event], { input: typeof input === 'string' ? input : JSON.stringify(input), env, encoding: 'utf8', timeout: 20000 });
 
   const r = run('UserPromptSubmit', { session_id: 's', prompt: `key ${GITHUB}` });
@@ -244,10 +254,38 @@ test('hook process: reads stdin, answers JSON, logs without content, fails open'
   const bad = run('UserPromptSubmit', '{not json');
   assert.equal(bad.status, 0, 'never crashes Claude Code');
   assert.match(bad.stdout, /could not check this step/, 'protect mode tells the user');
+  assert.equal(JSON.parse(bad.stdout).decision, 'block', 'protect does not allow an unchecked prompt');
   const quiet = run('PreToolUse', { session_id: 's', tool_name: 'Read', tool_input: { file_path: '/r/a.js' } });
   assert.equal(quiet.stdout, '', 'no opinion, no output');
   const log = fs.readdirSync(path.join(home, 'log')).map((f) => fs.readFileSync(path.join(home, 'log', f), 'utf8')).join('');
   assert.ok(!log.includes(GITHUB) && !log.includes('key '), 'log has no content');
+});
+
+test('installer: a half-deleted copy of its own is rebuilt; anything else is left alone', () => {
+  // What a removal interrupted on Windows (a file in use) leaves behind: the manifest gone, a few
+  // of guard's own files still there. Turning Claude Code back on must rebuild it, not refuse.
+  const home = tmp();
+  const left = path.join(home, 'marketplace', 'blackbrake', 'app');
+  fs.mkdirSync(path.join(left, 'vendor'), { recursive: true });
+  fs.writeFileSync(path.join(left, 'package.json'), JSON.stringify({ name: 'blackbrake-guard', version: '0.2.0' }));
+  fs.writeFileSync(path.join(left, 'vendor', 'gitleaks.rules.json'), '{}');
+  const dir = buildMarketplace({ home });
+  assert.ok(fs.existsSync(path.join(dir, '.claude-plugin', 'marketplace.json')));
+
+  // An empty folder is rebuilt too.
+  const empty = tmp();
+  fs.mkdirSync(path.join(empty, 'marketplace'));
+  assert.ok(fs.existsSync(path.join(buildMarketplace({ home: empty }), 'blackbrake', 'hooks', 'hooks.json')));
+
+  // Someone else's files, or another package's copy: refused and untouched.
+  for (const plant of [(d) => fs.writeFileSync(path.join(d, 'notes.txt'), 'mine'), (d) => { fs.mkdirSync(path.join(d, 'blackbrake', 'app'), { recursive: true }); fs.writeFileSync(path.join(d, 'blackbrake', 'app', 'package.json'), JSON.stringify({ name: 'other' })); }]) {
+    const h = tmp();
+    const d = path.join(h, 'marketplace');
+    fs.mkdirSync(d);
+    plant(d);
+    assert.throws(() => buildMarketplace({ home: h }), /not a marketplace blackbrake made/);
+    assert.ok(fs.readdirSync(d).length > 0, 'left alone');
+  }
 });
 
 test('installer copy: plugin, code and rules land in ~/.blackbrake/marketplace only', () => {

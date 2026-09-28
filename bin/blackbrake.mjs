@@ -277,7 +277,8 @@ function installIn(ids, p) {
 async function setupCommand(opts, p) {
   // In a terminal, the first installation is the permissions checklist: everything on by default,
   // and the user switches off what they do not want. Scripts use --yes (all on) or --agent.
-  if (!opts.yes && !opts.agent && isInteractive()) return permissionsCommand(opts, p, { fresh: true });
+  // Saved, it goes on to the main menu.
+  if (!opts.yes && !opts.agent && isInteractive()) return (await permissionsCommand(opts, p, { fresh: true, nextStep: 'menu' })) ? interactive(opts, p) : false;
   const ids = agentList(opts.agent);
 
   if (!ids.length) {
@@ -667,7 +668,7 @@ function permissionItems({ fresh = false } = {}) {
 }
 
 // Applies a checklist result. Anything that lowers protection needs the typed confirmation.
-async function applyPermissions(choice, p, opts) {
+async function applyPermissions(choice, p) {
   const status = agentStatus();
   const on = (key) => choice[key] === true;
   const hookIds = status.filter((a) => a.kind === 'hooks' && (a.detected || a.installed)).map((a) => a.id);
@@ -717,9 +718,19 @@ async function applyPermissions(choice, p, opts) {
   return true;
 }
 
-async function permissionsCommand(opts, p, { fresh = false } = {}) {
+// Where the "continue" button at the top of the checklist leads.
+const PROCEED = {
+  menu: 'Continue: save and open the main menu',
+  next: 'Continue: save and go on',
+  back: 'Continue: save and return to the main menu',
+};
+
+async function permissionsCommand(opts, p, { fresh = false, nextStep = 'back' } = {}) {
   print(screen(p, t('PERMISSIONS'), t('where blackbrake runs and what it may do'), columns(), { pose: 'determined', line: t('You decide where I run. Lowering protection asks you to type a word.') }));
-  const choice = await checklist(p, permissionItems({ fresh }));
+
+  // The first time, say plainly that everything starts switched on.
+  if (fresh) print([`  ${p.amber('●')} ${p.cream(t('Everything is on by default: guard protects every AI tool found.'))}`, `    ${p.faint(t('Untick (space) what you do not want, then continue.'))}`, '']);
+  const choice = await checklist(p, permissionItems({ fresh }), { proceed: { label: t(PROCEED[nextStep]), hint: t('or press enter anywhere') } });
 
   if (!choice) {
     print(['', `  ${p.faint(t(isInteractive() ? 'Nothing changed.' : 'Nothing changed. Run it in a terminal, or add --yes.'))}`, '']);
@@ -727,7 +738,7 @@ async function permissionsCommand(opts, p, { fresh = false } = {}) {
     return false;
   }
 
-  return applyPermissions(choice, p, opts);
+  return applyPermissions(choice, p);
 }
 
 // The home screen's agents panel: pick an agent to add or remove blackbrake.
@@ -902,6 +913,7 @@ const remember = (kind, data) => setSetting(`last_${kind}`, { at: new Date().toI
 // Brakey's one-line tip on the main menu: the most useful next step right now.
 function tip(p, state) {
   const days = (at) => (at ? Math.floor((Date.now() - Date.parse(at)) / 864e5) : null);
+  // oxlint-disable-next-line anti-slop/no-runtime-typeof -- Validate untrusted JSON or assert the boundary contract; preserve primitive type checks.
   const safe = (v) => (v && typeof v === 'object' ? { at: typeof v.at === 'string' ? v.at : null, real: Math.max(0, Number.parseInt(v.real, 10) || 0), where: clean(String(v.where ?? ''), 60) } : null);
   const scan = safe(getSetting('last_scan', null));
   const auditRun = safe(getSetting('last_audit', null));
@@ -935,7 +947,7 @@ async function welcome(opts, p) {
   print(['']);
   const go = await select(p, [{ value: 'setup', label: t('Set up protection now'), hint: t('recommended · you choose each harness') }, { value: 'later', label: t('Look around first') }]);
 
-  if (go !== 'setup' || !(await permissionsCommand(opts, p, { fresh: true }))) return;
+  if (go !== 'setup' || !(await permissionsCommand(opts, p, { fresh: true, nextStep: 'next' }))) return;
   const next = await select(p, [{ value: 'scan', label: t('Scan my AI harnesses now'), hint: t('secrets already sitting in their history') }, { value: 'later', label: t('Later') }]);
 
   if (next === 'scan') scanCommand(opts, p);

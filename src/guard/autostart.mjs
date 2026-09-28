@@ -11,20 +11,14 @@ import os from 'node:os';
 import path from 'node:path';
 import { isBackgroundRunning } from './background.mjs';
 import { assertNoLinks } from './install.mjs';
+import { loginItemFile } from './policy.mjs';
 import { guardHome } from './state.mjs';
 import { systemProgram } from './window.mjs';
 
 const UNSAFE = /["'`$%\\&<>|\r\n]/;
 
 export function autostartFile(platform = process.platform, env = process.env) {
-  // The user's own Startup folder (APPDATA only when it lies inside the user's home).
-  const roaming = env.APPDATA && path.isAbsolute(env.APPDATA) && env.APPDATA.toLowerCase().startsWith(os.homedir().toLowerCase()) ? env.APPDATA : path.join(os.homedir(), 'AppData', 'Roaming');
-
-  if (platform === 'win32') return path.join(roaming, 'Microsoft', 'Windows', 'Start Menu', 'Programs', 'Startup', 'blackbrake-watch.vbs');
-
-  if (platform === 'darwin') return path.join(os.homedir(), 'Library', 'LaunchAgents', 'dev.blackbrake.watch.plist');
-
-  return path.join(os.homedir(), '.config', 'autostart', 'blackbrake-watch.desktop');
+  return loginItemFile({ platform, home: os.homedir(), appData: env.APPDATA, xdgConfigHome: env.XDG_CONFIG_HOME });
 }
 
 const xml = (s) => s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');

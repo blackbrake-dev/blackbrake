@@ -111,15 +111,19 @@ counting them splits expensive episodes into pieces and hides the concentration.
 | The agent reads `.env`, SSH keys, cloud credentials; runs `printenv`, `echo $TOKEN` | warns | **asks** you first |
 | The agent writes a secret into a file | warns | asks |
 | A command prints a secret | warns | **hides it** from the model (replaces it with its masked shape) |
-| Destructive command right after a compaction | warns | asks |
-| The agent tries to switch guard off (mode, uninstall, plugin disable, `disableAllHooks`) | **denied** | **denied** |
+| Destructive command (higher concern after compaction, or for irreversible damage) | warns | asks |
+| Visible exfiltration, credential access, remote execution, persistence or permission bypass | warns | asks |
+| The agent tries to switch guard off, including writing a sabotage script | **denied** | **denied** |
+| A tool call cannot be checked (invalid input, inspection limit or recoverable hook error) | **denied**: the tamper check is mandatory | **denied** |
 
 - Switch with `blackbrake mode protect` / `blackbrake mode observe`. Lowering protection and
   uninstalling need your confirmation in an interactive terminal, which the agent does not have.
 - The log (`~/.blackbrake/log`) keeps time, a hashed session id, event type and rule id. Never
   prompts, commands, file contents or secret values. `blackbrake status` and `blackbrake log` read it.
-- If a check fails, guard stays out of the way (Claude Code continues) and, in protect mode, tells
-  you that the step was not protected.
+- Recoverable errors refuse tool calls in both modes, and refuse prompts in protect where the
+  agent supports it. Output that cannot be inspected is withheld where replacement is supported.
+  A failure to write the log never cancels a denial. The hook times out incomplete stdin after five
+  seconds; an agent killing the process earlier is a separate limit, described below.
 - **What guard cannot promise.** It runs as your user, like the agent. It denies the direct and
   common indirect ways to switch it off (tools, shell commands, MCP tools, editing Claude Code's
   settings, deleting its state, which then falls back to protect), but an agent able to run
@@ -130,11 +134,39 @@ counting them splits expensive episodes into pieces and hides the concentration.
   - Confirmations prove a terminal, not a person: an agent that builds a pseudo-terminal and hides
     what it runs could still answer one. guard refuses the common forms (`script`, `expect`,
     `winpty`, `tmux send-keys`, variables next to `mode observe`/`uninstall`…), not every form.
-  - Secrets are found as written, with invisible characters removed, percent-encoding undone and
-    base64/hex decoded. A value the agent deliberately transforms (reversed, spaced out, encrypted)
-    is not recognised.
-  - Tool outputs and requests are checked up to 4 MB each; hook input above 32 MB is let through
-    with a warning rather than blocking the agent.
+  - Secret detection is heuristic: vendor patterns, entropy and value-based example filters are
+    not a proof that a value is safe. Guard does not trust surrounding words such as "example" or
+    source-context allowlists. Test-mode service credentials are still credentials. Audit keeps its
+    separate retrospective context classifier.
+  - Common invisible characters, percent/base64/hex encoding, literal concatenation and escapes
+    are inspected. A recognised encoded secret that cannot be individually replaced causes the
+    whole output to be withheld, where supported. Arbitrary transformations, encryption, fragments
+    sent in separate calls and data read internally by an unknown tool can still escape detection.
+  - Limits are explicit, not silent prefix scans: 32 MiB of raw hook input, approximately four
+    million text characters, 64 nesting levels, 100,000 inspected nodes, 64 Ki characters per shell
+    command and 128 candidate paths for filesystem resolution. Shell globs (`settings.jso[n]`,
+    `.env*`) are matched against the disk with up to 256 folder reads and 200,000 names per
+    command. Uncheckable tool calls are refused in **both** modes, so a command past these limits
+    (for example a glob over hundreds of folders) is refused, not partly checked; split it into
+    smaller steps. Protect blocks prompts and withholds output where the agent supports it.
+    Decoding remains bounded (two percent-decoding passes, 64 encoded runs, 2 MiB decoded budget).
+  - Shell analysis folds common literal concatenation, brace expansion and parameter replacement;
+    it is not a shell interpreter. Previously defined aliases/functions, custom binaries, scripts
+    run by filename, computed paths, runtime loaders,
+    mounted-drive aliases and state across commands are not fully observable. A Git remote added
+    in one step followed by a push, or `npm publish` of already-staged material, is not classified
+    as exfiltration without visible sensitive material. Ordinary Git and package workflows stay usable.
+  - A hook that never starts, fails during module loading, runs out of memory, or is killed or
+    externally timed out cannot return a denial. The host agent decides what happens then; do not
+    assume fail-closed behaviour across agent versions. Protocol tests do not replace native agent
+    integration tests. Use OS isolation and independent network/credential controls for that boundary.
+  - On Linux the background watcher starts at login through the desktop's autostart folder; a
+    machine without a graphical session (a server, an SSH login) never runs it on its own.
+    Guard protects the platform's login item and its containing folders from common move, delete
+    and permission changes, but that cannot make a graphical login service exist on a server.
+  - Local path checks cover common spellings, relocated configuration and existing local links,
+    but are not an atomic filesystem sandbox. A same-user process can race a check, change a link
+    after approval, or create another hard link. Remote links are not intentionally resolved.
   - Codex runs new hooks only after you trust them once in its `/hooks` screen. That is Codex's
     own safeguard; blackbrake does not bypass it.
   - Tools without hooks (Ollama, Hermes…) are watched from outside: blackbrake warns about secrets
@@ -142,6 +174,10 @@ counting them splits expensive episodes into pieces and hides the concentration.
   - An agent can end processes by name (`taskkill /IM node.exe`): that stops the background
     watcher until the next login, and cannot be refused without breaking ordinary development work.
     The hooks inside each agent keep running.
+  - Logs and watcher PID files are not authenticated against their owner. Malformed records, long
+    lines and deleted logs are handled, and writes through planted parent links are refused, but
+    valid-looking forged records, forged liveness, flooding and disabled notifications remain
+    possible for a same-user attacker. `BLACKBRAKE_NO_WINDOW` is a test override, not an OS boundary.
 - **Detection rules contain example keys.** `vendor/gitleaks.rules.json` includes gitleaks'
   global allowlist, which lists a few public example keys (such as Google's documentation keys)
   so they are never reported. They are upstream data, not credentials; secret scanners may flag them.
@@ -169,9 +205,12 @@ Each agent allows different things, and guard does the most each one allows:
 | Cursor | blocked | asks for commands and MCP; reads of files holding keys are denied | warned; hidden for MCP | `~/.cursor/hooks.json` |
 | GitHub Copilot CLI | not possible (Copilot ignores that hook's answer) | asks | hidden | `~/.copilot/hooks/blackbrake.json` |
 | Windsurf | blocked | denied (cannot ask) | not possible | `~/.codeium/windsurf/hooks.json` |
+| Devin CLI | blocked | denied (cannot ask) | warned, not hidden | user-level `devin/config.json` |
 
 "Denied (cannot ask)" means that in protect mode guard says why and you run the step yourself, or
-switch to observe. Observe mode never blocks in any agent.
+switch to observe. Observe warns about risk; sabotage and uncheckable tool calls are still denied.
+A log entry only says "redacted" where the adapter supports replacing that output. Copilot's ignored
+prompt hook is logged as a warning, never as a successful block.
 
 ### Live alerts
 

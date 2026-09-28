@@ -78,9 +78,9 @@ export function shannon(s) {
   return h;
 }
 
-function allowed(al, secret, match, line) {
+function allowed(al, secret, match, line, valueOnly = false) {
   const target = al.target === 'match' ? match : al.target === 'line' ? line : secret;
-  const hitRe = al.regexes.length > 0 && al.regexes.some((re) => re.test(target));
+  const hitRe = !(valueOnly && (al.target === 'match' || al.target === 'line')) && al.regexes.length > 0 && al.regexes.some((re) => re.test(target));
   const lower = secret.toLowerCase();
   const hitStop = al.stopwords.length > 0 && al.stopwords.some((w) => lower.includes(w));
 
@@ -160,7 +160,7 @@ function windowsFor(text, at, multiline) {
 }
 
 // Returns [{ ruleId, secret, index, length }]
-export function scanText(rules, text) {
+export function scanText(rules, text, { valueOnlyAllowlists = false } = {}) {
   const out = [];
 
   for (const [rule, at] of candidateRules(rules, text)) {
@@ -192,7 +192,7 @@ export function scanText(rules, text) {
         // characters before the keyword, trimmed from the regex above): give it back to them.
         const whole = text.slice(Math.max(0, lineStartNear(text, index, 100)), index + m[0].length);
 
-        if (rule.allowlists.some((al) => allowed(al, secret, whole, line))) continue;
+        if (rule.allowlists.some((al) => allowed(al, secret, whole, line, valueOnlyAllowlists))) continue;
         out.push({ ruleId: rule.id, secret, index: index + Math.max(0, m[0].indexOf(secret)), length: secret.length });
       }
     }

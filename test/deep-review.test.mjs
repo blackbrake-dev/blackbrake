@@ -66,11 +66,11 @@ test('a credential written into a shell command is caught', () => {
   assert.ok(!JSON.stringify(out).includes(GH), 'masked only');
 });
 
-test('a secret found only once decoded is warned about, never reported as hidden', () => {
+test('a secret found only once decoded is withheld rather than falsely reported as redacted', () => {
   const encoded = `t=${Buffer.from(GH).toString('base64')}`;
   const out = decide('PostToolUse', { tool_name: 'Bash', tool_response: encoded }, ctx()).output;
-  assert.equal(out.hookSpecificOutput.updatedToolOutput, undefined, 'no false "hidden" claim');
-  assert.match(out.hookSpecificOutput.additionalContext, /credential/);
+  assert.match(out.hookSpecificOutput.updatedToolOutput, /withheld/);
+  assert.equal(JSON.stringify(out).includes(encoded), false);
 });
 
 test('Codex shell tools are checked as Bash', () => {
@@ -153,9 +153,8 @@ test('the follower keeps a total budget per tick and an overlap between reads', 
   assert.ok(f.read()[0].text.length <= 1000, 'budget respected');
   const half = GH.slice(0, 20);
   fs.appendFileSync(file, half);
-  f.read();
-  f.read();
-  f.read();
+
+  for (let i = 0; i < 8; i++) assert.ok(f.read().every((r) => Buffer.byteLength(r.text) <= 1000));
   fs.appendFileSync(file, GH.slice(20));
   const last = f.read().map((r) => r.text).join('');
   assert.ok(last.includes(GH), 'a secret split across two writes is seen whole');
@@ -192,6 +191,7 @@ test('round 2: the login item is really written (atomically) and removed; the pi
   assert.equal(removeAutostart({ home: dir, file, kill: false }), true);
   assert.equal(fs.existsSync(file), false);
   assert.equal(isWatcherProcess(1, { platform: 'win32', run: () => ({ stdout: '"notepad.exe","1"' }) }), false, 'a pid that is not node is never killed');
+  // oxlint-disable-next-line anti-slop/no-runtime-typeof -- Validate untrusted JSON or assert the boundary contract; preserve primitive type checks.
   assert.equal(typeof isWatcherProcess(process.pid), 'boolean', 'runs without throwing on this system');
 });
 
