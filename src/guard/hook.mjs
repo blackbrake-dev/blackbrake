@@ -9,7 +9,7 @@ import { fileURLToPath } from 'node:url';
 import { detectLang, setLang, t } from '../i18n.mjs';
 import { loadRules } from '../secrets/engine.mjs';
 import { ADAPTERS, renderError } from './harnesses.mjs';
-import { decide, isSensitivePath, loginItemFile, protectedTarget, shellViews, withinBudget } from './policy.mjs';
+import { decide, isSensitivePath, linkedPlaces, loginItemFile, protectedTarget, shellViews, withinBudget } from './policy.mjs';
 import { isLocalPath, localFileStat } from '../text.mjs';
 import { appendLog, getMode, getSavedLang, getSession, setSession, trustedHome } from './state.mjs';
 import { maybeOpenWindow } from './window.mjs';
@@ -295,10 +295,17 @@ async function main() {
       get canonical() {
         const real = (dir) => (dir && realPathOf(dir)) || dir;
 
+        // Only a place that is itself a link is resolved (one lstat each); links above home are
+        // covered by the real folders here. Local absolute paths only (a UNC lstat sends NTLM).
+        const linkTarget = (p) => {
+          try { return isLocalPath(p) && path.isAbsolute(p) && fs.lstatSync(p).isSymbolicLink() ? realPathOf(p) : null; } catch { return null; }
+        };
+
         realDirs ??= {
           home: real(this.home), guardDir: real(this.guardDir), claudeDir: real(this.claudeDir), platform: this.platform,
           appData: real(this.appData), xdgConfigHome: real(this.xdgConfigHome),
           agentDirs: Object.fromEntries(Object.entries(this.agentDirs).map(([dir, name]) => [real(dir), name])),
+          links: linkedPlaces(this, linkTarget),
         };
 
         return realDirs;

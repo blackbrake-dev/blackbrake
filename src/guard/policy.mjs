@@ -458,10 +458,64 @@ export function loginItemFile({ platform = process.platform, home = '', appData 
   return paths.join(insideHome(xdgConfigHome) || paths.join(h, '.config'), ...LOGIN_ITEMS.linux);
 }
 
+// What runs guard, as written: each agent's folder (default or relocated) and the files or folders
+// in it that hold guard's hooks or plugin, ~/.claude.json, and the folders above the login item.
+// Dotfile setups often make one of these a link to a folder the agent can name directly.
+const AGENT_FILES = {
+  claude: ['settings.json', 'settings.local.json', 'plugins'],
+  codex: ['hooks.json', 'config.toml'], gemini: ['settings.json', 'config'], cursor: ['hooks.json'],
+  copilot: ['hooks', 'settings.json', 'config.json'], codeium: ['hooks.json', 'windsurf'], windsurf: ['hooks.json'],
+  devin: ['hooks.json', 'hooks.v1.json', 'config.json', 'config.local.json'],
+};
+
+function protectedPlaces({ home = '', claudeDir = '', agentDirs = {}, platform = process.platform, appData = '', xdgConfigHome = '' }) {
+  if (!home) return [];
+  const paths = platform === 'win32' ? path.win32 : path.posix;
+  const login = loginItemFile({ platform, home, appData, xdgConfigHome });
+  const above = [];
+
+  for (let dir = paths.dirname(login); dir !== paths.resolve(home) && dir !== paths.dirname(dir); dir = paths.dirname(dir)) above.push(dir);
+
+  const folders = [
+    ...Object.keys(AGENT_FILES).map((name) => [name === 'claude' && claudeDir ? claudeDir : paths.join(home, `.${name}`), name]),
+    ...Object.entries(agentDirs),
+    ...[appData, xdgConfigHome || paths.join(home, '.config')].flatMap((dir) => (dir ? [[paths.join(dir, 'devin'), 'devin']] : [])),
+  ];
+
+  return [paths.join(home, '.claude.json'), login, ...above, ...folders.flatMap(([dir, name]) => [dir, ...(AGENT_FILES[name] ?? []).map((file) => paths.join(dir, file))])];
+}
+
+// Each protected place that is a link, as [its real path, its written path]: writing to a link's
+// target is writing to the place. `linkTarget` returns the real path of a link, or null.
+export function linkedPlaces(ctx, linkTarget) {
+  const pairs = [];
+
+  for (const place of protectedPlaces(ctx)) {
+    const real = norm(linkTarget(place));
+
+    if (real && real !== norm(place)) pairs.push([real, norm(place)]);
+  }
+
+  return pairs;
+}
+
 // `canonical` holds the same folders by their real paths (the hook resolves links and 8.3 names in
-// the target, so /private/var or C:\Users\runneradmin must match a HOME of /var or RUNNER~1 too).
+// the target, so /private/var or C:\Users\runneradmin must match a HOME of /var or RUNNER~1 too),
+// and `links`, the protected places that are links (see linkedPlaces).
 export function protectedTarget(file, ctx = {}) {
-  return protectedIn(file, ctx) ?? (ctx.canonical ? protectedIn(file, ctx.canonical) : null);
+  const found = protectedIn(file, ctx);
+
+  if (found || !ctx.canonical) return found;
+  const f = norm(file);
+
+  // Every link that holds the file is tried: their real paths can nest (~/.codex inside ~/.claude's).
+  for (const [real, place] of ctx.canonical.links ?? []) {
+    const kind = f === real || f.startsWith(`${real}/`) ? protectedIn(place + f.slice(real.length), ctx) : null;
+
+    if (kind) return kind;
+  }
+
+  return protectedIn(file, ctx.canonical);
 }
 
 function protectedIn(file, { home = '', guardDir = '', claudeDir = '', agentDirs = {}, platform = process.platform, appData = '', xdgConfigHome = '' } = {}) {

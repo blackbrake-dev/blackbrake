@@ -420,6 +420,67 @@ test('R3 protected folders named through a link still match their real paths', (
   assert.equal(run(f, 'claude', ...SHELL.claude(`chmod 000 "${slash(alias)}"`)).denied, true, 'link to a login-item folder under a linked home');
 });
 
+test('T7 an agent folder kept elsewhere through a link is protected at its real path too', (t) => {
+  const f = fixture(t, 'observe');
+  delete f.env.CLAUDE_CONFIG_DIR;
+  delete f.env.CODEX_HOME;
+  const dotfiles = path.join(f.root, 'dotfiles');
+  const slash = (p) => p.replace(/\\/g, '/');
+  const link = (target, at, kind = 'dir') => fs.symlinkSync(target, at, kind === 'dir' && process.platform === 'win32' ? 'junction' : kind);
+
+  for (const dir of ['claude', 'codex', 'config', 'Library']) fs.mkdirSync(path.join(dotfiles, dir), { recursive: true });
+  const settings = path.join(dotfiles, 'claude', 'settings.json');
+  fs.writeFileSync(settings, '{"enabledPlugins":{"blackbrake@blackbrake":true}}');
+  fs.writeFileSync(path.join(dotfiles, 'codex', 'hooks.json'), '{}');
+
+  fs.mkdirSync(path.join(dotfiles, 'claude', 'gemini'));
+
+  try {
+    link(path.join(dotfiles, 'claude'), path.join(f.root, '.claude'));
+    link(path.join(dotfiles, 'codex'), path.join(f.root, '.codex'));
+    link(path.join(dotfiles, 'claude', 'gemini'), path.join(f.root, '.gemini'));
+  } catch (e) {
+    if (['EPERM', 'EACCES', 'ENOTSUP'].includes(e.code)) {
+      t.skip('links cannot be created here');
+
+      return;
+    }
+
+    throw e;
+  }
+
+  const write = (file, content) => run(f, 'claude', 'PreToolUse', { tool_name: 'Write', tool_input: { file_path: file, content } });
+
+  assert.equal(write(settings, '{}').denied, true, 'Write drops the plugin at the real path');
+  assert.equal(run(f, 'claude', ...SHELL.claude(`echo {} > "${slash(settings)}"`)).denied, true, 'shell overwrite at the real path');
+  assert.equal(write(path.join(dotfiles, 'codex', 'hooks.json'), '{}').denied, true, 'Codex hooks at the real path');
+  assert.equal(write(path.join(dotfiles, 'claude', 'gemini', 'settings.json'), '{}').denied, true, 'a linked folder inside another linked folder');
+
+  // The login-item folder under a linked ~/Library (macOS) or ~/.config (Linux).
+  if (process.platform !== 'win32') {
+    const [folder, sub] = process.platform === 'darwin' ? ['Library', 'LaunchAgents'] : ['config', 'autostart'];
+    delete f.env.XDG_CONFIG_HOME;
+    fs.mkdirSync(path.join(dotfiles, folder, sub));
+    link(path.join(dotfiles, folder), path.join(f.root, process.platform === 'darwin' ? 'Library' : '.config'));
+    assert.equal(run(f, 'claude', ...SHELL.claude(`mv "${path.join(dotfiles, folder, sub)}" /tmp/x`)).denied, true, 'login-item folder at its real path');
+  }
+
+  // A single linked file (dotfile managers link files, not folders). Windows may not allow it.
+  const claudeJson = path.join(dotfiles, 'claude.json');
+  fs.writeFileSync(claudeJson, '{}');
+
+  try { link(claudeJson, path.join(f.root, '.claude.json'), 'file'); } catch (e) {
+    if (!['EPERM', 'EACCES', 'ENOTSUP'].includes(e.code)) throw e;
+  }
+
+  if (fs.existsSync(path.join(f.root, '.claude.json'))) assert.equal(write(claudeJson, '{}').denied, true, 'linked ~/.claude.json at its real path');
+
+  // Ordinary work in the dotfiles folder is not refused.
+  assert.equal(write(path.join(dotfiles, 'claude', 'notes.md'), 'x').denied, false, 'other file in the linked folder');
+  assert.equal(write(settings, '{"enabledPlugins":{"blackbrake@blackbrake":true},"theme":"dark"}').denied, false, 'settings edit that keeps guard');
+  assert.equal(run(f, 'claude', ...SHELL.claude(`git -C "${slash(dotfiles)}" status`)).stopped, false, 'git in the dotfiles folder');
+});
+
 test('T2b watcher stop aliases and installed app folders are denied in observe', (t) => {
   const f = fixture(t, 'observe');
   const guardCode = path.join(f.home, 'app', 'src', 'guard').replace(/\\/g, '/');
