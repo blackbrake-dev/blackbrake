@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
+import { createLoopDetector } from '../src/guard/loops.mjs';
 import { baselineFromEpisodes, spendAlert } from '../src/guard/spend.mjs';
 
 const episodes = (n) => Array.from({ length: n }, (_, i) => ({ cost: i + 1, responses: i % 4 + 1 }));
@@ -46,4 +47,39 @@ test('baseline-alerts-once-on-upward-crossing', () => {
   assert.equal(first.action, 'ask');
   assert.equal(episode.costAlerted, true);
   assert.equal(spendAlert({ baseline, episode, mode: 'protect', canAsk: true }), null);
+});
+
+test('loop-hash-is-canonical-and-private', () => {
+  const detector = createLoopDetector({ secret: Buffer.alloc(32, 7) });
+  const first = detector.record('Read', { path: 'café', options: { b: 2, a: 1 } }, 0);
+  const second = detector.record('Read', { options: { a: 1, b: 2 }, path: 'café' }, 1);
+  const different = detector.record('Read', { options: { a: '1', b: 2 }, path: 'café' }, 2);
+  const snapshot = JSON.stringify(detector.snapshot());
+
+  assert.equal(first.fingerprint, second.fingerprint);
+  assert.notEqual(first.fingerprint, different.fingerprint);
+  assert.equal(snapshot.includes('café'), false);
+  assert.equal(snapshot.includes('options'), false);
+});
+
+test('loop-triggers-third-in-eight-within-120s', () => {
+  const detector = createLoopDetector({ secret: Buffer.alloc(32, 8) });
+
+  assert.equal(detector.record('Bash', { command: 'fixture' }, 0).alert, false);
+  assert.equal(detector.record('Bash', { command: 'fixture' }, 60_000).alert, false);
+  assert.equal(detector.record('Bash', { command: 'fixture' }, 120_000).alert, true);
+  assert.equal(detector.record('Bash', { command: 'fixture' }, 120_001).alert, false);
+
+  const expired = createLoopDetector({ secret: Buffer.alloc(32, 9) });
+  expired.record('Read', { path: 'fixture' }, 0);
+  expired.record('Read', { path: 'fixture' }, 1);
+  assert.equal(expired.record('Read', { path: 'fixture' }, 120_001).alert, false);
+});
+
+test('loop-never-silently-denies', () => {
+  const baseline = { ready: true, p50: 1, p90: 2, n: 30 };
+  const noAsk = spendAlert({ baseline, episode: { cost: 3 }, mode: 'protect', canAsk: false });
+
+  assert.equal(noAsk.action, 'warn');
+  assert.notEqual(noAsk.action, 'deny');
 });
