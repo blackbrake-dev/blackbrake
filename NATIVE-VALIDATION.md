@@ -21,7 +21,7 @@ transcripts, environment dumps, config contents or credential values.
    home directory or valuable agent history.
 2. Record OS version and architecture, desktop environment, terminal, Node and npm versions, and
    the versions of the agents being tested.
-3. Install the exact public package: `npm install -g blackbrake@0.2.2`, then check
+3. Install the exact public package: `npm install -g blackbrake@0.2.3`, then check
    `blackbrake --version`. Verify the registry signature and provenance from an isolated npm
    project with `npm audit signatures`.
 4. Run `blackbrake setup` interactively. Never lower protection or uninstall through an agent.

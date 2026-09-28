@@ -40,6 +40,8 @@ test('watcher identification survives the process title rewrite on Linux and mac
   assert.equal(linux('/usr/bin/node\0server.js\0'), false, 'another node process is never taken for the watcher');
   assert.equal(mac('/usr/bin/vim notes.txt'), false, 'another program is never taken for the watcher');
   assert.equal(linux('blackbrake watch\0'), false, 'the alerts window is not the background watcher');
+  assert.equal(linux('vim\0blackbrake watcher notes.txt\0'), false, 'an argument that merely starts with the title is not the watcher');
+  assert.equal(mac('/usr/bin/vim blackbrake watcher'), false, 'the title must lead the command line');
 });
 
 test('native macOS/Linux: login item starts the installed watcher and removal stops it', { skip: !POSIX_NATIVE, timeout: 30000 }, async () => {

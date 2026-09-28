@@ -74,8 +74,9 @@ export function installAutostart({ home = guardHome(), start = true, file = auto
 // /proc; macOS: ps; Windows: the process image must at least be node.exe).
 // watch-main.mjs names itself 'blackbrake watcher' (process.title). On Linux and macOS that rewrites
 // the argument area, so /proc and ps show the title instead of the script path: both count. The
-// alerts window ('blackbrake watch') does not.
-const WATCHER = /watch-main\.mjs|^blackbrake watcher(?![\w-])/m;
+// alerts window ('blackbrake watch') does not, nor a program that merely has it as an argument: the
+// title leads the whole command line. This decides whether uninstall may kill a pid.
+const WATCHER = /watch-main\.mjs|^blackbrake watcher(?![\w-])/;
 
 export function isWatcherProcess(pid, { platform = process.platform, run = spawnSync, read = fs.readFileSync, find = systemProgram } = {}) {
   try {
