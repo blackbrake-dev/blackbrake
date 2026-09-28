@@ -23,9 +23,11 @@ export function systemProgram(name, { platform = process.platform, env = process
   // holding its own wt.exe or powershell.exe. The user's AppData comes from the home folder, and
   // Windows from the system drive (SystemRoot only when it is exactly <drive>:\Windows).
   const root = /^[A-Za-z]:\\Windows$/i.test(env.SystemRoot ?? '') ? env.SystemRoot : 'C:\\Windows';
+  // WindowsApps is writable by the user (and so by the agent): only Windows Terminal lives there.
+  const apps = name.toLowerCase() === 'wt.exe' ? [p.join(home(), 'AppData', 'Local', 'Microsoft', 'WindowsApps')] : [];
 
   const dirs = platform === 'win32'
-    ? [p.join(home(), 'AppData', 'Local', 'Microsoft', 'WindowsApps'), p.join(root, 'System32'), p.join(root, 'System32', 'WindowsPowerShell', 'v1.0')]
+    ? [...apps, p.join(root, 'System32'), p.join(root, 'System32', 'WindowsPowerShell', 'v1.0')]
     : ['/usr/bin', '/usr/local/bin', '/bin', '/opt/homebrew/bin'];
 
   return dirs.filter((d) => p.isAbsolute(d) && !/^[\\/]{2}/.test(d)).map((d) => p.join(d, name)).find((f) => has(f)) ?? null;
