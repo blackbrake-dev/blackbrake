@@ -7,6 +7,7 @@ import { createUsageLedger, isUserPromptMessage } from '../src/cost/analyzer.mjs
 import { summarizeHistory, tailTranscript } from '../src/cost/live.mjs';
 import { usageCost } from '../src/cost/prices.mjs';
 import { applyEpisodeEvent, baselineFromEpisodes, labelEpisode } from '../src/guard/spend.mjs';
+import { ensureSpendBaseline } from '../src/guard/watch.mjs';
 
 const assistant = (id, output = 100) => ({
   id,
@@ -33,8 +34,9 @@ test('live-cost-counts-each-response-once', () => {
     first: true,
     delta: usageCost(first.usage, first.model),
     size: 1100,
+    sizeDelta: 1100,
   });
-  assert.deepEqual(ledger.account({ requestId: 'request-1' }, duplicate), { first: false, delta: 0, size: 1100 });
+  assert.deepEqual(ledger.account({ requestId: 'request-1' }, duplicate), { first: false, delta: 0, size: 1100, sizeDelta: 0 });
   const corrected = ledger.account({ requestId: 'request-1' }, final);
 
   assert.equal(corrected.first, false);
@@ -118,4 +120,22 @@ test('live-cost-prices-one-hour-cache-at-2x', () => {
 
   assert.ok(hour > 0);
   assert.notEqual(hour, plain);
+});
+
+test('background-baseline-persists-aggregates-only', async () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'blackbrake-background-history-'));
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), 'blackbrake-background-home-'));
+  const rows = [];
+
+  for (let i = 0; i < 30; i++) {
+    rows.push({ message: { role: 'user', content: `fixture ${i}` } });
+    rows.push({ requestId: `request-${i}`, message: assistant(`response-${i}`, 100) });
+  }
+  fs.writeFileSync(path.join(root, 'history.jsonl'), `${rows.map(JSON.stringify).join('\n')}\n`);
+  const summary = await ensureSpendBaseline({ home, root });
+  const saved = fs.readFileSync(path.join(home, 'spend', 'baseline.json'), 'utf8');
+
+  assert.equal(summary.baseline.ready, true);
+  assert.equal(saved.includes('fixture'), false);
+  assert.equal(saved.includes('response-'), false);
 });

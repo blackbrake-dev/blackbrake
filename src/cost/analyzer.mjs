@@ -24,12 +24,12 @@ const userPromptText = (msg) => {
 
 export const isUserPromptMessage = (msg) => userPromptText(msg) !== null;
 
-export function createUsageLedger() {
-  const responses = new Map();
+export function createUsageLedger({ keyOf = (record, msg) => msg.id ?? record.requestId ?? null, entries = [] } = {}) {
+  const responses = new Map(entries.map((entry) => [entry.key, { size: entry.size, cost: entry.cost }]));
 
   return {
     account(record, msg) {
-      const key = msg.id ?? record.requestId ?? null;
+      const key = keyOf(record, msg);
       const size = usageSize(msg.usage);
       const cost = usageCost(msg.usage, msg.model);
       const prev = key ? responses.get(key) : null;
@@ -37,17 +37,21 @@ export function createUsageLedger() {
       if (!prev) {
         if (key) responses.set(key, { size, cost });
 
-        return { first: true, delta: cost, size };
+        return { first: true, delta: cost, size, sizeDelta: size };
       }
 
       if (size > prev.size) {
         const delta = cost - prev.cost;
+        const sizeDelta = size - prev.size;
         Object.assign(prev, { size, cost });
 
-        return { first: false, delta, size };
+        return { first: false, delta, size, sizeDelta };
       }
 
-      return { first: false, delta: 0, size: prev.size };
+      return { first: false, delta: 0, size: prev.size, sizeDelta: 0 };
+    },
+    snapshot() {
+      return [...responses].map(([key, value]) => ({ key, ...value }));
     },
   };
 }

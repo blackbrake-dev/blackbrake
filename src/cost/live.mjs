@@ -4,7 +4,7 @@ import crypto from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { createCostAnalyzer } from './analyzer.mjs';
+import { createCostAnalyzer, createUsageLedger } from './analyzer.mjs';
 import { defaultRoot, describeFile, listTranscripts, readTranscript } from '../transcripts.mjs';
 import { baselineFromEpisodes } from '../guard/spend.mjs';
 
@@ -69,6 +69,31 @@ export async function summarizeHistory({ root = defaultRoot(), harness = 'claude
     baseline,
     aboveP90: baseline.ready ? result.episodeCosts.filter((episode) => episode.cost > baseline.p90).length : 0,
   };
+}
+
+export function accountTranscriptRecords(records, previous = {}, secret) {
+  if (!secret) throw new TypeError('Usage ledger secret is required');
+  const keyOf = (record, msg) => {
+    const id = msg.id ?? record.requestId ?? null;
+
+    return id === null ? null : crypto.createHmac('sha256', secret).update(String(id)).digest('hex');
+  };
+  const ledger = createUsageLedger({ keyOf, entries: previous.responses ?? [] });
+  let costDelta = 0;
+  let responseDelta = 0;
+  let tokensDelta = 0;
+
+  for (const record of records) {
+    const msg = record?.message;
+
+    if (msg?.role !== 'assistant' || !msg.usage) continue;
+    const result = ledger.account(record, msg);
+    costDelta += result.delta;
+    tokensDelta += result.sizeDelta;
+    if (result.first) responseDelta++;
+  }
+
+  return { costDelta, responseDelta, tokensDelta, responses: ledger.snapshot() };
 }
 
 // Manual/bootstrap probe: intentionally emits aggregates only.

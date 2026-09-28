@@ -366,12 +366,17 @@ const devin = {
 const claude = {
   id: 'claude',
   name: 'Claude Code',
-  events: { SessionStart: 'SessionStart', UserPromptSubmit: 'UserPromptSubmit', PreToolUse: 'PreToolUse', PostToolUse: 'PostToolUse', PostCompact: 'PostCompact', SessionEnd: 'SessionEnd' },
+  events: { SessionStart: 'SessionStart', UserPromptSubmit: 'UserPromptSubmit', PreToolUse: 'PreToolUse', PostToolUse: 'PostToolUse', PostToolBatch: 'PostToolBatch', Stop: 'Stop', PostCompact: 'PostCompact', SessionEnd: 'SessionEnd' },
   normalize: (event, raw) => ({ event, input: raw }),
   render: (event, out) => (out ? json(out) : none),
 };
 
 export const ADAPTERS = { claude, codex, gemini, cursor, copilot, windsurf, devin };
+
+for (const [id, adapter] of Object.entries(ADAPTERS)) {
+  adapter.spendCost = id === 'claude';
+  adapter.spendAsk = id === 'claude';
+}
 
 // A recoverable failure must not become permission in protect. An externally killed hook is still
 // subject to the host agent's timeout policy; no process can answer after it has been killed.

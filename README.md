@@ -120,6 +120,8 @@ counting them splits expensive episodes into pieces and hides the concentration.
   uninstalling need your confirmation in an interactive terminal, which the agent does not have.
 - The log (`~/.blackbrake/log`) keeps time, a hashed session id, event type and rule id. Never
   prompts, commands, file contents or secret values. `blackbrake status` and `blackbrake log` read it.
+- Spend brakes warn at your per-agent local p90 after 30 episodes (list-price estimate, not savings);
+  live cost is currently available for Claude Code, while repeated-call warnings cover all seven agents.
 - Recoverable errors refuse tool calls in both modes, and refuse prompts in protect where the
   agent supports it. Output that cannot be inspected is withheld where replacement is supported.
   A failure to write the log never cancels a denial. The hook times out incomplete stdin after five

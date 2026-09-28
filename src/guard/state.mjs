@@ -174,3 +174,62 @@ export const getSession = (id, home = guardHome()) => readJson(sessionFile(home,
 export function setSession(id, patch, home = guardHome()) {
   writePrivate(sessionFile(home, id), JSON.stringify({ ...getSession(id, home), ...patch }));
 }
+
+const spendDir = (home) => path.join(home, 'spend');
+
+const safeBaseline = (harness, value) => ({
+  harness,
+  n: Number.isInteger(value?.n) && value.n >= 0 ? value.n : 0,
+  p50: Number.isFinite(value?.p50) && value.p50 >= 0 ? value.p50 : 0,
+  p90: Number.isFinite(value?.p90) && value.p90 >= 0 ? value.p90 : 0,
+  ready: value?.ready === true,
+});
+
+export function getSpendBaseline(harness, home = guardHome()) {
+  const value = readJson(path.join(spendDir(home), 'baseline.json'))?.[harness];
+
+  return value ? safeBaseline(harness, value) : null;
+}
+
+export function setSpendBaseline(harness, baseline, home = guardHome()) {
+  if (!/^[a-z][a-z0-9-]{0,31}$/.test(harness)) throw new TypeError('Invalid harness');
+  const file = path.join(spendDir(home), 'baseline.json');
+  const baselines = readJson(file) ?? {};
+
+  writePrivate(file, `${JSON.stringify({ ...baselines, [harness]: safeBaseline(harness, baseline) }, null, 2)}\n`);
+}
+
+export function appendSpendEpisode(episode, home = guardHome()) {
+  const safe = {
+    at: typeof episode?.at === 'string' && !Number.isNaN(Date.parse(episode.at)) ? episode.at : new Date().toISOString(),
+    harness: /^[a-z][a-z0-9-]{0,31}$/.test(episode?.harness) ? episode.harness : 'unknown',
+    cost: Number.isFinite(episode?.cost) && episode.cost >= 0 ? episode.cost : 0,
+    responses: Number.isInteger(episode?.responses) && episode.responses >= 0 ? episode.responses : 0,
+    ...( ['valid', 'invalid', 'unrated'].includes(episode?.label) ? { label: episode.label } : {}),
+  };
+
+  writePrivate(path.join(spendDir(home), 'episodes.jsonl'), `${JSON.stringify(safe)}\n`, 'a');
+}
+
+export function getSpendSecret(home = guardHome()) {
+  const file = path.join(spendDir(home), 'key');
+  let encoded = null;
+
+  try { encoded = fs.readFileSync(file, 'utf8').trim(); } catch { /* create below */ }
+  if (/^[A-Za-z0-9+/]{43}=$/.test(encoded ?? '')) return Buffer.from(encoded, 'base64');
+  const secret = crypto.randomBytes(32);
+  writePrivate(file, `${secret.toString('base64')}\n`);
+
+  return secret;
+}
+
+export const getInventorySnapshot = (home = guardHome()) => {
+  const items = readJson(path.join(spendDir(home), 'inventory.json'))?.items;
+
+  return Array.isArray(items) ? items.filter((item) => /^[a-f0-9]{64}$/.test(item?.id) && /^[a-f0-9]{64}$/.test(item?.digest)) : [];
+};
+
+export function setInventorySnapshot(items, home = guardHome()) {
+  const safe = items.filter((item) => /^[a-f0-9]{64}$/.test(item?.id) && /^[a-f0-9]{64}$/.test(item?.digest)).map(({ id, digest }) => ({ id, digest }));
+  writePrivate(path.join(spendDir(home), 'inventory.json'), `${JSON.stringify({ items: safe }, null, 2)}\n`);
+}

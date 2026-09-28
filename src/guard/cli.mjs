@@ -12,7 +12,7 @@ import { select } from '../ui/menu.mjs';
 import { columns, padEnd, screen } from '../ui/term.mjs';
 import { AGENTS } from './agents.mjs';
 import { claudeCommand, guardInstalled, PLUGIN_ID } from './install.mjs';
-import { getMode, guardHome, readLog, sessionHash } from './state.mjs';
+import { getMode, getSpendBaseline, guardHome, readLog, sessionHash } from './state.mjs';
 
 const KIND = {
   'secret-in-prompt': 'secret in your message',
@@ -27,6 +27,9 @@ const KIND = {
   tamper: 'attempt to switch guard off',
   error: 'guard could not check a step',
   'secret-in-history': 'secret written in an agent\'s history',
+  'spend-cost': 'episode above your local cost p90',
+  'spend-loop': 'repeated tool call',
+  'inventory-delta': 'new or changed agent add-ons',
 };
 
 const interesting = (e) => e.kind in KIND;
@@ -111,6 +114,10 @@ export function statusLines(p, { days = 7 } = {}) {
 
   out.push(`  ${padEnd(p.faint(t('Plugin')), 14)}${plugin}`);
   out.push(`  ${padEnd(p.faint(t('Mode')), 14)}${modeBadge(p, mode)} ${p.faint(t(mode === 'protect' ? 'stops secrets before they are sent' : 'warns and logs; nothing is stopped'))}`);
+  const baseline = getSpendBaseline('claude');
+
+  if (baseline?.ready) out.push(`  ${padEnd(p.faint(t('Spend')), 14)}${p.cream(t('{n} local episodes · median API≈${median} · p90 API≈${p90}', { n: baseline.n, median: baseline.p50.toFixed(2), p90: baseline.p90.toFixed(2) }))}`);
+  else out.push(`  ${padEnd(p.faint(t('Spend')), 14)}${p.faint(t('fewer than 30 local Claude Code episodes · no cost threshold'))}`);
 
   if (inst.installed) {
     const check = integrity();

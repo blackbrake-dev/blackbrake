@@ -25,10 +25,10 @@ export const callFingerprint = (secret, tool, args) => crypto.createHmac('sha256
   .update(JSON.stringify(['tool', String(tool).normalize('NFC'), canonical(args)]))
   .digest('hex');
 
-export function createLoopDetector({ secret, windowSize = 8, windowMs = 120_000, threshold = 3 } = {}) {
+export function createLoopDetector({ secret, windowSize = 8, windowMs = 120_000, threshold = 3, snapshot = null } = {}) {
   if (!secret) throw new TypeError('Loop detector secret is required');
-  let calls = [];
-  const alerted = new Set();
+  let calls = Array.isArray(snapshot?.calls) ? snapshot.calls.filter((call) => Number.isFinite(call?.at) && /^[a-f0-9]{64}$/.test(call?.fingerprint)).slice(-windowSize) : [];
+  const alerted = new Set(Array.isArray(snapshot?.alerted) ? snapshot.alerted.filter((fingerprint) => /^[a-f0-9]{64}$/.test(fingerprint)) : []);
 
   return {
     record(tool, args, at = Date.now()) {
