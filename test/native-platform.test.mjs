@@ -88,10 +88,18 @@ test('native macOS/Linux: login item starts the installed watcher and removal st
     assert.equal(isWatcherProcess(pid), true, 'the native process table identifies blackbrake watcher');
     assert.equal(removeAutostart({ home, file: loginItem }), true);
     await waitFor(() => !isBackgroundRunning(home), 'the watcher did not stop after removing its login item');
+    await waitFor(() => !isWatcherProcess(pid), 'the watcher process is gone from the process table');
     assert.equal(fs.existsSync(loginItem), false);
   } finally {
-    if (pid && isWatcherProcess(pid)) {
+    // The pid came from this test's own temporary pid file, written seconds ago by the watcher it
+    // started: stop it even when identification is what failed (the first CI run leaked it that
+    // way), and wait for it before deleting the folder it could otherwise recreate by logging.
+    if (pid) {
       try { process.kill(pid, 'SIGTERM'); } catch { /* already stopped */ }
+
+      const end = Date.now() + 5000;
+
+      while (Date.now() < end && isWatcherProcess(pid)) await wait(50);
     }
 
     for (const [key, value] of Object.entries(saved)) {
