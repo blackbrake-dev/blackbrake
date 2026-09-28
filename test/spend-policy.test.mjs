@@ -11,6 +11,9 @@ import { baselineFromEpisodes, spendAlert, spendTextTokens, withinTokenBudget } 
 import { appendSpendEpisode, getSpendBaseline, setSpendBaseline } from '../src/guard/spend-state.mjs';
 import { getSession, readLog, setMode } from '../src/guard/state.mjs';
 
+// The hook runs as a real process: its home, guard folder and window stay inside the test folder.
+const isolated = (home, extra = {}) => ({ ...process.env, HOME: home, USERPROFILE: home, BLACKBRAKE_HOME: home, BLACKBRAKE_NO_WINDOW: '1', BLACKBRAKE_LANG: 'en', ...extra });
+
 const episodes = (n) => Array.from({ length: n }, (_, i) => ({ cost: i + 1, responses: i % 4 + 1 }));
 
 const assistantMessage = (id, output = 100) => ({ id, role: 'assistant', model: 'claude-sonnet-5', content: [], usage: { input_tokens: 10_000, output_tokens: output } });
@@ -129,14 +132,14 @@ test('loop-mode-observe-warns-and-protect-asks', () => {
     let result;
 
     result = spawnSync(process.execPath, ['src/guard/hook.mjs', 'UserPromptSubmit'], {
-      cwd: path.resolve('.'), env: { ...process.env, BLACKBRAKE_HOME: home }, input: JSON.stringify({ session_id: 'fixture-session', prompt: 'fixture prompt' }), encoding: 'utf8',
+      cwd: path.resolve('.'), env: isolated(home), input: JSON.stringify({ session_id: 'fixture-session', prompt: 'fixture prompt' }), encoding: 'utf8',
     });
     assert.equal(result.status, 0, result.stderr);
 
     for (let i = 0; i < 3; i++) {
       result = spawnSync(process.execPath, ['src/guard/hook.mjs', 'PreToolUse'], {
         cwd: path.resolve('.'),
-        env: { ...process.env, BLACKBRAKE_HOME: home },
+        env: isolated(home),
         input: JSON.stringify({ session_id: 'fixture-session', tool_name: 'Read', tool_input: { file_path: 'fixture.txt' } }),
         encoding: 'utf8',
       });
@@ -159,7 +162,7 @@ test('hook-live-cost-counts-one-response-and-warns', () => {
   const claude = fs.mkdtempSync(path.join(os.tmpdir(), 'blackbrake-claude-'));
   const project = path.join(claude, 'projects', 'fixture');
   const transcript = path.join(project, 'session.jsonl');
-  const env = { ...process.env, BLACKBRAKE_HOME: home, CLAUDE_CONFIG_DIR: claude };
+  const env = isolated(home, { CLAUDE_CONFIG_DIR: claude });
   const run = (event, input) => spawnSync(process.execPath, ['src/guard/hook.mjs', event], { cwd: path.resolve('.'), env, input: JSON.stringify(input), encoding: 'utf8' });
 
   fs.mkdirSync(project, { recursive: true });
@@ -195,7 +198,7 @@ test('inventory-delta-new-and-changed-only', () => {
 
 test('episode-resumes-open-state', () => {
   const home = fs.mkdtempSync(path.join(os.tmpdir(), 'blackbrake-resume-'));
-  const env = { ...process.env, BLACKBRAKE_HOME: home };
+  const env = isolated(home);
   const run = (event, input) => spawnSync(process.execPath, ['src/guard/hook.mjs', event], { cwd: path.resolve('.'), env, input: JSON.stringify(input), encoding: 'utf8' });
 
   assert.equal(run('UserPromptSubmit', { session_id: 'resume-session', prompt: 'fixture prompt' }).status, 0);
