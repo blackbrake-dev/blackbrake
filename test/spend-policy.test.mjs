@@ -8,7 +8,8 @@ import { ADAPTERS } from '../src/guard/harnesses.mjs';
 import { inventoryDelta } from '../src/load/inventory.mjs';
 import { createLoopDetector } from '../src/guard/loops.mjs';
 import { baselineFromEpisodes, spendAlert, spendTextTokens, withinTokenBudget } from '../src/guard/spend.mjs';
-import { appendSpendEpisode, getSession, getSpendBaseline, readLog, setMode, setSpendBaseline } from '../src/guard/state.mjs';
+import { appendSpendEpisode, getSpendBaseline, setSpendBaseline } from '../src/guard/spend-state.mjs';
+import { getSession, readLog, setMode } from '../src/guard/state.mjs';
 
 const episodes = (n) => Array.from({ length: n }, (_, i) => ({ cost: i + 1, responses: i % 4 + 1 }));
 
@@ -126,6 +127,11 @@ test('loop-mode-observe-warns-and-protect-asks', () => {
     const home = fs.mkdtempSync(path.join(os.tmpdir(), `blackbrake-loop-${mode}-`));
     setMode(mode, home);
     let result;
+
+    result = spawnSync(process.execPath, ['src/guard/hook.mjs', 'UserPromptSubmit'], {
+      cwd: path.resolve('.'), env: { ...process.env, BLACKBRAKE_HOME: home }, input: JSON.stringify({ session_id: 'fixture-session', prompt: 'fixture prompt' }), encoding: 'utf8',
+    });
+    assert.equal(result.status, 0, result.stderr);
 
     for (let i = 0; i < 3; i++) {
       result = spawnSync(process.execPath, ['src/guard/hook.mjs', 'PreToolUse'], {

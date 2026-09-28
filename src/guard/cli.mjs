@@ -12,7 +12,8 @@ import { select } from '../ui/menu.mjs';
 import { columns, padEnd, screen } from '../ui/term.mjs';
 import { AGENTS } from './agents.mjs';
 import { claudeCommand, guardInstalled, PLUGIN_ID } from './install.mjs';
-import { getMode, getSpendBaseline, guardHome, readLog, sessionHash } from './state.mjs';
+import { getSpendBaseline } from './spend-state.mjs';
+import { getMode, guardHome, readLog, sessionHash } from './state.mjs';
 
 const KIND = {
   'secret-in-prompt': 'secret in your message',

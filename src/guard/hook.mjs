@@ -7,15 +7,11 @@ import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { detectLang, setLang, t } from '../i18n.mjs';
-import { accountTranscriptRecords, tailTranscript } from '../cost/live.mjs';
 import { loadRules } from '../secrets/engine.mjs';
-import { isHarnessText } from '../transcripts.mjs';
 import { ADAPTERS, renderError } from './harnesses.mjs';
-import { createLoopDetector } from './loops.mjs';
 import { decide, isSensitivePath, linkedPlaces, loginItemFile, protectedTarget, shellViews, withinBudget } from './policy.mjs';
 import { isLocalPath, localFileStat } from '../text.mjs';
-import { appendLog, appendSpendEpisode, getMode, getSavedLang, getSession, getSpendBaseline, getSpendSecret, setSession, trustedHome } from './state.mjs';
-import { spendAlert, withinTokenBudget } from './spend.mjs';
+import { appendLog, getMode, getSavedLang, getSession, setSession, trustedHome } from './state.mjs';
 import { maybeOpenWindow } from './window.mjs';
 
 const MAX_INPUT = 32 * 1024 * 1024;
@@ -426,77 +422,12 @@ async function main() {
 
     let { output, log } = decide(event, input, ctx);
 
-    // Spend signals are advisory and run after the security policy. Their persisted state contains
-    // only aggregates and HMACs; any failure leaves the security decision untouched.
-    try {
-      const secret = getSpendSecret(home);
-      // oxlint-disable-next-line anti-slop/no-runtime-typeof -- Session state is untrusted JSON read at this boundary.
-      const spend = session.spend && typeof session.spend === 'object' ? { ...session.spend } : {};
-      const notices = [];
-      const spendLog = [];
-      // oxlint-disable-next-line anti-slop/no-runtime-typeof -- Normalized hook input is validated at this boundary.
-      const realPrompt = event === 'UserPromptSubmit' && typeof input.prompt === 'string' && !isHarnessText(input.prompt);
-      // oxlint-disable-next-line anti-slop/no-runtime-typeof -- Native transcript paths are validated before any read.
-      const transcript = harness === 'claude' && typeof input.transcript_path === 'string' ? input.transcript_path : null;
-
-      if (transcript && spend.open) {
-        const root = process.env.CLAUDE_CONFIG_DIR && path.isAbsolute(process.env.CLAUDE_CONFIG_DIR)
-          ? path.join(process.env.CLAUDE_CONFIG_DIR, 'projects')
-          : path.join(os.homedir(), '.claude', 'projects');
-
-        const tailed = tailTranscript(transcript, { roots: [root], state: spend.tail });
-        const usage = accountTranscriptRecords(tailed.records, { responses: spend.responses }, secret);
-        spend.tail = tailed.state;
-        spend.responses = usage.responses;
-        spend.open = { ...spend.open, cost: (spend.open.cost ?? 0) + usage.costDelta, responses: (spend.open.responses ?? 0) + usage.responseDelta, tokens: (spend.open.tokens ?? 0) + usage.tokensDelta };
-      } else if (transcript && !spend.tail) {
-        // Establish the byte boundary without assigning earlier history to a new live episode.
-        spend.tail = tailTranscript(transcript, { roots: [process.env.CLAUDE_CONFIG_DIR && path.isAbsolute(process.env.CLAUDE_CONFIG_DIR) ? path.join(process.env.CLAUDE_CONFIG_DIR, 'projects') : path.join(os.homedir(), '.claude', 'projects')] }).state;
-      }
-
-      if (realPrompt) {
-        if (spend.open) appendSpendEpisode({ ...spend.open, harness }, home);
-        spend.open = { start: Date.now(), cost: 0, responses: 0, tokens: 0, label: null, costAlerted: false };
-        spend.responses = [];
-        spend.loops = null;
-      }
-
-      if (event === 'PreToolUse') {
-        const detector = createLoopDetector({ secret, snapshot: spend.loops });
-        const repeated = detector.record(input.tool_name, input.tool_input);
-        spend.loops = detector.snapshot();
-
-        if (repeated.alert) {
-          const message = t('blackbrake: the same call was requested 3 times in 2 minutes. It may be a loop; continue?');
-          notices.push({ action: mode === 'protect' && adapter.spendAsk ? 'ask' : 'warn', message });
-          spendLog.push({ ev: event, kind: 'spend-loop', action: mode === 'protect' && adapter.spendAsk ? 'asked' : 'warned', fingerprint: repeated.fingerprint.slice(0, 16) });
-        }
-      }
-
-      if (spend.open && adapter.spendCost) {
-        const alert = spendAlert({ baseline: getSpendBaseline(harness, home), episode: spend.open, mode, canAsk: adapter.spendAsk });
-
-        if (alert) {
-          notices.push(alert);
-          spendLog.push({ ev: event, kind: 'spend-cost', action: alert.action === 'ask' ? 'asked' : 'warned', cost: spend.open.cost, responses: spend.open.responses });
-        }
-      }
-
-      setSession(input.session_id, { spend }, home);
-      log = [...log, ...spendLog];
-
-      const denied = output?.decision === 'block' || output?.hookSpecificOutput?.permissionDecision === 'deny';
-
-      if (notices.length && !denied) {
-        const message = notices.map((notice) => notice.message).join(' ');
-        const ask = notices.some((notice) => notice.action === 'ask');
-
-        if (ask || withinTokenBudget(message, spend.open?.tokens)) output = ask
-          ? { ...output, hookSpecificOutput: { ...output?.hookSpecificOutput, hookEventName: event, permissionDecision: 'ask', permissionDecisionReason: message } }
-          : { ...output, systemMessage: [output?.systemMessage, message].filter(Boolean).join(' ') };
-      }
-    } catch {
-      // Cost/loop telemetry is fail-open and cannot weaken or replace a security decision.
+    // The common tool path does not load spend parsing/state code. An open episode, a real prompt
+    // or a transcript event loads it on demand; failures cannot weaken the security decision.
+    if (session.spend || event === 'UserPromptSubmit' || (harness === 'claude' && input.transcript_path)) {
+      try {
+        ({ output, log } = await (await import('./spend-hook.mjs')).applySpendEvent({ session, event, input, harness, adapter, mode, home, output, log }));
+      } catch { /* advisory spend processing is fail-open */ }
     }
 
     // An agent that hands over the file's contents before a read (Cursor): a file holding real

@@ -12,7 +12,8 @@ import { inventoryDelta, inventoryDigest } from '../load/inventory.mjs';
 import { clean } from '../text.mjs';
 import { defaultRoot } from '../transcripts.mjs';
 import { mini, motionAllowed, padEnd, screen } from '../ui/term.mjs';
-import { appendLog, getInventorySnapshot, getSetting, getSpendSecret, guardHome, logDir, setInventorySnapshot, setSpendBaseline, writePrivate } from './state.mjs';
+import { getInventorySnapshot, getSpendSecret, setInventorySnapshot, setSpendBaseline } from './spend-state.mjs';
+import { appendLog, getSetting, guardHome, logDir, writePrivate } from './state.mjs';
 import { HARNESSES } from './registry.mjs';
 import { systemProgram } from './window.mjs';
 
