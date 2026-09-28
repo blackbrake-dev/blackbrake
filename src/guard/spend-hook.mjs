@@ -30,7 +30,7 @@ export async function applySpendEvent({ session, event, input, harness, adapter,
   // oxlint-disable-next-line anti-slop/no-runtime-typeof -- Native transcript paths are validated before any read.
   const transcript = harness === 'claude' && typeof input.transcript_path === 'string' ? input.transcript_path : null;
 
-  if (transcript && spend.open) {
+  if (transcript && spend.open && spend.tail) {
     const { accountTranscriptRecords, tailTranscript } = await import('../cost/live.mjs');
 
     const root = process.env.CLAUDE_CONFIG_DIR && path.isAbsolute(process.env.CLAUDE_CONFIG_DIR)
@@ -52,7 +52,7 @@ export async function applySpendEvent({ session, event, input, harness, adapter,
       : path.join(os.homedir(), '.claude', 'projects');
 
     // Establish the byte boundary without assigning earlier history to a new live episode.
-    spend.tail = tailTranscript(transcript, { roots: [root] }).state;
+    spend.tail = tailTranscript(transcript, { roots: [root], fromEnd: true }).state;
     spendChanged = true;
   }
 

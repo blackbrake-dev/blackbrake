@@ -46,7 +46,9 @@ const trustedFile = (file, roots) => {
 // waited on or followed; the descriptor is checked again before reading.
 const OPEN = fs.constants.O_RDONLY | (fs.constants.O_NONBLOCK ?? 0) | (fs.constants.O_NOFOLLOW ?? 0);
 
-export function tailTranscript(file, { roots = [], state = {}, maxBytes = 1024 * 1024 } = {}) {
+// fromEnd: the first sight of a transcript starts at its last complete line; earlier history never
+// belongs to a live episode (a resumed or long session would otherwise feed it in 1 MiB steps).
+export function tailTranscript(file, { roots = [], state = {}, maxBytes = 1024 * 1024, fromEnd = false } = {}) {
   const fd = fs.openSync(trustedFile(file, roots), OPEN);
   let stat;
   let bytes;
@@ -58,8 +60,10 @@ export function tailTranscript(file, { roots = [], state = {}, maxBytes = 1024 *
     if (!stat.isFile()) throw new Error('Transcript is not a regular file');
     const reset = (state.identity && state.identity !== identityOf(stat)) || stat.size < (state.offset ?? 0);
 
-    offset = reset ? 0 : state.offset ?? 0;
-    state = reset ? {} : state;
+    const start = fromEnd && !state.identity ? Math.max(0, stat.size - maxBytes) : null;
+
+    offset = start ?? (reset ? 0 : state.offset ?? 0);
+    state = start > 0 ? { skip: true } : reset ? {} : state;
     bytes = Buffer.alloc(Math.min(maxBytes, Math.max(0, stat.size - offset)));
     fs.readSync(fd, bytes, 0, bytes.length, offset);
   } finally { fs.closeSync(fd); }
