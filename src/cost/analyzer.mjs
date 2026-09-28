@@ -22,11 +22,42 @@ const userPromptText = (msg) => {
   return text && !isHarnessText(text) ? text : null;
 };
 
+export const isUserPromptMessage = (msg) => userPromptText(msg) !== null;
+
+export function createUsageLedger() {
+  const responses = new Map();
+
+  return {
+    account(record, msg) {
+      const key = msg.id ?? record.requestId ?? null;
+      const size = usageSize(msg.usage);
+      const cost = usageCost(msg.usage, msg.model);
+      const prev = key ? responses.get(key) : null;
+
+      if (!prev) {
+        if (key) responses.set(key, { size, cost });
+
+        return { first: true, delta: cost, size };
+      }
+
+      if (size > prev.size) {
+        const delta = cost - prev.cost;
+        Object.assign(prev, { size, cost });
+
+        return { first: false, delta, size };
+      }
+
+      return { first: false, delta: 0, size: prev.size };
+    },
+  };
+}
+
 export function createCostAnalyzer() {
   const sessions = new Map(); // session -> { project, episodes: [], turns, minInput, crSum, cost }
   const subagentRuns = [];    // { session, startTs, cost, turns, tools }
   const unknownModels = new Set();
-  const responses = new Map(); // response key -> { size, cost, targets }
+  const usageLedger = createUsageLedger();
+  const responseTargets = new Map(); // response key -> accumulators charged for this response
   const toolIds = new Set();
   let file = null;
   let current = null;         // current file accumulator
@@ -45,20 +76,18 @@ export function createCostAnalyzer() {
   // corrects the cost already added to its accumulators.
   const account = (record, msg, cost, targets) => {
     const key = msg.id ?? record.requestId ?? null;
-    const size = usageSize(msg.usage);
-    const prev = key ? responses.get(key) : null;
+    const result = usageLedger.account(record, msg);
 
-    if (!prev) {
-      if (key) responses.set(key, { size, cost, targets });
+    if (result.first) {
+      if (key) responseTargets.set(key, targets);
 
       for (const t of targets) t.cost += cost;
 
       return true;
     }
 
-    if (size > prev.size) {
-      for (const t of prev.targets) t.cost += cost - prev.cost;
-      Object.assign(prev, { size, cost });
+    if (result.delta) {
+      for (const t of responseTargets.get(key) ?? []) t.cost += result.delta;
     }
 
     return false;
