@@ -79,9 +79,11 @@ test('notification and window commands are fixed programs with argument lists (n
 
 test('programs come from system folders, never from the agent\'s PATH', () => {
   const seen = [];
+
   const found = systemProgram('wt.exe', { platform: 'win32', env: { LOCALAPPDATA: 'C:\\Users\\me\\AppData\\Local', SystemRoot: 'C:\\Windows', PATH: 'C:\\repo\\evil' }, has: (f) => { seen.push(f);
 
  return f.endsWith('wt.exe'); } });
+
   assert.match(found, /WindowsApps[\\/]wt\.exe$/);
   assert.ok(seen.every((f) => !f.includes('evil')), 'PATH is not consulted');
   assert.equal(systemProgram('xterm', { platform: 'linux', has: (f) => f === '/usr/bin/xterm' }), '/usr/bin/xterm');
@@ -90,6 +92,7 @@ test('programs come from system folders, never from the agent\'s PATH', () => {
 test('the alerts window opens once per session, never twice at once, and can be turned off', () => {
   const home = tmp();
   const calls = [];
+
   const spawner = (file, args) => { calls.push([file, args]);
 
  return { on() {}, unref() {} }; };
