@@ -382,6 +382,39 @@ test('R3 folders that hold guard login items cannot be moved, locked or deleted'
   for (const folder of unusedRoots) assert.equal(run(f, 'claude', ...SHELL.claude(`rm -rf ${folder}`)).denied, false, `unrelated platform folder: ${folder}`);
 });
 
+// macOS temp folders live under /var, a link to /private/var; Windows runners spell the profile
+// with an 8.3 name (RUNNER~1). A folder guard protects, named that way in the environment, must
+// still match the real path that globs and links resolve to.
+test('R3 protected folders named through a link still match their real paths', (t) => {
+  const f = fixture(t, 'observe');
+  const linked = `${f.root}-linked`;
+
+  try { fs.symlinkSync(f.root, linked, process.platform === 'win32' ? 'junction' : 'dir'); } catch (e) {
+    if (['EPERM', 'EACCES', 'ENOTSUP'].includes(e.code)) { t.skip('links cannot be created here'); return; }
+
+    throw e;
+  }
+
+  t.after(() => fs.rmSync(linked, { force: true, recursive: false }));
+  for (const [k, v] of Object.entries(f.env)) if (v.startsWith(f.root)) f.env[k] = linked + v.slice(f.root.length);
+  const slash = (p) => p.replace(/\\/g, '/');
+  const claude = f.env.CLAUDE_CONFIG_DIR;
+  fs.mkdirSync(claude);
+  fs.writeFileSync(path.join(claude, 'settings.json'), '{"enabledPlugins":{"blackbrake@blackbrake":true}}');
+  assert.equal(run(f, 'claude', ...SHELL.claude(`echo {} > ${slash(claude)}/setting?.json`)).denied, true, 'glob into a linked config folder');
+
+  const startup = process.platform === 'win32'
+    ? path.join(f.root, 'custom-roaming', 'Microsoft', 'Windows', 'Start Menu', 'Programs', 'Startup')
+    : process.platform === 'darwin'
+      ? path.join(f.root, 'Library', 'LaunchAgents')
+      : path.join(f.root, 'custom-xdg', 'autostart');
+
+  fs.mkdirSync(startup, { recursive: true });
+  const alias = path.join(f.cwd, 'login-items');
+  fs.symlinkSync(startup, alias, process.platform === 'win32' ? 'junction' : 'dir');
+  assert.equal(run(f, 'claude', ...SHELL.claude(`chmod 000 "${slash(alias)}"`)).denied, true, 'link to a login-item folder under a linked home');
+});
+
 test('T2b watcher stop aliases and installed app folders are denied in observe', (t) => {
   const f = fixture(t, 'observe');
   const guardCode = path.join(f.home, 'app', 'src', 'guard').replace(/\\/g, '/');

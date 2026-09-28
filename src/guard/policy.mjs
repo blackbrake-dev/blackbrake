@@ -458,7 +458,13 @@ export function loginItemFile({ platform = process.platform, home = '', appData 
   return paths.join(insideHome(xdgConfigHome) || paths.join(h, '.config'), ...LOGIN_ITEMS.linux);
 }
 
-export function protectedTarget(file, { home = '', guardDir = '', claudeDir = '', agentDirs = {}, platform = process.platform, appData = '', xdgConfigHome = '' } = {}) {
+// `canonical` holds the same folders by their real paths (the hook resolves links and 8.3 names in
+// the target, so /private/var or C:\Users\runneradmin must match a HOME of /var or RUNNER~1 too).
+export function protectedTarget(file, ctx = {}) {
+  return protectedIn(file, ctx) ?? (ctx.canonical ? protectedIn(file, ctx.canonical) : null);
+}
+
+function protectedIn(file, { home = '', guardDir = '', claudeDir = '', agentDirs = {}, platform = process.platform, appData = '', xdgConfigHome = '' } = {}) {
   let f = norm(file);
 
   if (!f) return null;

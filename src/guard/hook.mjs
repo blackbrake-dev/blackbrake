@@ -271,6 +271,7 @@ async function main() {
     }
 
     let rules = null;
+    let realDirs = null;
 
     const claudeDir = process.env.CLAUDE_CONFIG_DIR && path.isAbsolute(process.env.CLAUDE_CONFIG_DIR) ? process.env.CLAUDE_CONFIG_DIR : '';
 
@@ -290,6 +291,18 @@ async function main() {
         [process.env.XDG_CONFIG_HOME ? path.join(process.env.XDG_CONFIG_HOME, 'devin') : '', 'devin'],
       ].filter(([dir]) => dir && path.isAbsolute(dir) && isLocalPath(dir))),
       compactedAt: session.compactedAt ?? null,
+      // The same folders by their real paths, which is how globs and links resolve a target.
+      get canonical() {
+        const real = (dir) => (dir && realPathOf(dir)) || dir;
+
+        realDirs ??= {
+          home: real(this.home), guardDir: real(this.guardDir), claudeDir: real(this.claudeDir), platform: this.platform,
+          appData: real(this.appData), xdgConfigHome: real(this.xdgConfigHome),
+          agentDirs: Object.fromEntries(Object.entries(this.agentDirs).map(([dir, name]) => [real(dir), name])),
+        };
+
+        return realDirs;
+      },
       get rules() {
         rules ??= loadRules();
 
