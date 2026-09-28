@@ -18,31 +18,75 @@ const inside = (root, file) => {
 
 const identityOf = (stat) => crypto.createHash('sha256').update(`${stat.dev}:${stat.ino}`).digest('hex').slice(0, 16);
 
-export function tailTranscript(file, { roots = [], state = {}, maxBytes = 1024 * 1024 } = {}) {
+// Only a local absolute path lexically under a known root, reached without links. Nothing is resolved
+// or opened before that check, so a planted link (or a remote share behind one) is never followed.
+// The root is the user's own configuration and may itself be a link; below it nothing may be.
+const trustedFile = (file, roots) => {
   if (!localAbsolute(file)) throw new Error('Untrusted transcript path');
-  const realFile = fs.realpathSync(file);
-  const realRoots = roots.filter(localAbsolute).map((root) => fs.realpathSync(root));
+  const target = path.resolve(file);
+  const root = roots.filter(localAbsolute).map((r) => path.resolve(r)).find((r) => inside(r, target));
 
-  if (!realRoots.some((root) => inside(root, realFile))) throw new Error('Untrusted transcript path');
-  const stat = fs.statSync(realFile);
+  if (!root) throw new Error('Untrusted transcript path');
+  let current = fs.realpathSync(root);
+  let stat = null;
 
-  if (!stat.isFile()) throw new Error('Transcript is not a regular file');
+  for (const part of path.relative(root, target).split(path.sep).filter(Boolean)) {
+    current = path.join(current, part);
+    stat = fs.lstatSync(current);
+
+    if (stat.isSymbolicLink()) throw new Error('Untrusted transcript path');
+  }
+
+  if (!stat?.isFile()) throw new Error('Transcript is not a regular file');
+
+  return current;
+};
+
+// Non-blocking and no final link on POSIX: a file swapped for a FIFO or link after the check is not
+// waited on or followed; the descriptor is checked again before reading.
+const OPEN = fs.constants.O_RDONLY | (fs.constants.O_NONBLOCK ?? 0) | (fs.constants.O_NOFOLLOW ?? 0);
+
+export function tailTranscript(file, { roots = [], state = {}, maxBytes = 1024 * 1024 } = {}) {
+  const fd = fs.openSync(trustedFile(file, roots), OPEN);
+  let stat;
+  let bytes;
+  let offset;
+
+  try {
+    stat = fs.fstatSync(fd);
+
+    if (!stat.isFile()) throw new Error('Transcript is not a regular file');
+    const reset = (state.identity && state.identity !== identityOf(stat)) || stat.size < (state.offset ?? 0);
+
+    offset = reset ? 0 : state.offset ?? 0;
+    state = reset ? {} : state;
+    bytes = Buffer.alloc(Math.min(maxBytes, Math.max(0, stat.size - offset)));
+    fs.readSync(fd, bytes, 0, bytes.length, offset);
+  } finally { fs.closeSync(fd); }
+
   const identity = identityOf(stat);
-  const rotated = state.identity && state.identity !== identity;
-  const offset = rotated || stat.size < (state.offset ?? 0) ? 0 : state.offset ?? 0;
-  const length = Math.min(maxBytes, Math.max(0, stat.size - offset));
-  const bytes = Buffer.alloc(length);
-  const fd = fs.openSync(realFile, 'r');
+  // A line longer than one read would stall the tail for the rest of the session: it is skipped up
+  // to its newline, never buffered (in practice a large pasted image or tool result, not usage).
+  let from = 0;
 
-  try { fs.readSync(fd, bytes, 0, length, offset); } finally { fs.closeSync(fd); }
+  if (state.skip) {
+    const end = bytes.indexOf(0x0a);
+
+    if (end < 0) return { records: [], state: { offset: offset + bytes.length, size: stat.size, identity, skip: true } };
+    from = end + 1;
+  }
 
   const newline = bytes.lastIndexOf(0x0a);
 
-  if (newline < 0) return { records: [], state: { offset, size: stat.size, identity } };
-  const complete = bytes.subarray(0, newline + 1).toString('utf8');
+  if (newline < from) {
+    const skip = from === 0 && bytes.length > 0 && bytes.length === maxBytes;
+
+    return { records: [], state: { offset: offset + (skip ? bytes.length : from), size: stat.size, identity, skip } };
+  }
+
   const records = [];
 
-  for (const line of complete.split('\n')) {
+  for (const line of bytes.subarray(from, newline + 1).toString('utf8').split('\n')) {
     if (!line) continue;
 
     try { records.push(JSON.parse(line)); } catch { /* malformed transcript lines are ignored */ }
