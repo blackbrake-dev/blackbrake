@@ -150,8 +150,9 @@ counting them splits expensive episodes into pieces and hides the concentration.
     (for example a glob over hundreds of folders) is refused, not partly checked; split it into
     smaller steps. Protect blocks prompts and withholds output where the agent supports it.
     Decoding remains bounded (two percent-decoding passes, 64 encoded runs, 2 MiB decoded budget).
-  - Shell analysis folds some literal operations; it is not a shell interpreter. Previously defined
-    aliases/functions, custom binaries, scripts run by filename, computed paths, runtime loaders,
+  - Shell analysis folds common literal concatenation, brace expansion and parameter replacement;
+    it is not a shell interpreter. Previously defined aliases/functions, custom binaries, scripts
+    run by filename, computed paths, runtime loaders,
     mounted-drive aliases and state across commands are not fully observable. A Git remote added
     in one step followed by a push, or `npm publish` of already-staged material, is not classified
     as exfiltration without visible sensitive material. Ordinary Git and package workflows stay usable.
@@ -161,6 +162,8 @@ counting them splits expensive episodes into pieces and hides the concentration.
     integration tests. Use OS isolation and independent network/credential controls for that boundary.
   - On Linux the background watcher starts at login through the desktop's autostart folder; a
     machine without a graphical session (a server, an SSH login) never runs it on its own.
+    Guard protects the platform's login item and its containing folders from common move, delete
+    and permission changes, but that cannot make a graphical login service exist on a server.
   - Local path checks cover common spellings, relocated configuration and existing local links,
     but are not an atomic filesystem sandbox. A same-user process can race a check, change a link
     after approval, or create another hard link. Remote links are not intentionally resolved.
