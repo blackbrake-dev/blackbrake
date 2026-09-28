@@ -390,12 +390,17 @@ test('R3 protected folders named through a link still match their real paths', (
   const linked = `${f.root}-linked`;
 
   try { fs.symlinkSync(f.root, linked, process.platform === 'win32' ? 'junction' : 'dir'); } catch (e) {
-    if (['EPERM', 'EACCES', 'ENOTSUP'].includes(e.code)) { t.skip('links cannot be created here'); return; }
+    if (['EPERM', 'EACCES', 'ENOTSUP'].includes(e.code)) {
+      t.skip('links cannot be created here');
+
+      return;
+    }
 
     throw e;
   }
 
   t.after(() => fs.rmSync(linked, { force: true, recursive: false }));
+
   for (const [k, v] of Object.entries(f.env)) if (v.startsWith(f.root)) f.env[k] = linked + v.slice(f.root.length);
   const slash = (p) => p.replace(/\\/g, '/');
   const claude = f.env.CLAUDE_CONFIG_DIR;
