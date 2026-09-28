@@ -72,15 +72,20 @@ export function installAutostart({ home = guardHome(), start = true, file = auto
 
 // Whether a pid belongs to blackbrake's watcher: its command line names watch-main.mjs (Linux:
 // /proc; macOS: ps; Windows: the process image must at least be node.exe).
-export function isWatcherProcess(pid, { platform = process.platform, run = spawnSync } = {}) {
+// watch-main.mjs names itself 'blackbrake watcher' (process.title). On Linux and macOS that rewrites
+// the argument area, so /proc and ps show the title instead of the script path: both count. The
+// alerts window ('blackbrake watch') does not.
+const WATCHER = /watch-main\.mjs|^blackbrake watcher(?![\w-])/m;
+
+export function isWatcherProcess(pid, { platform = process.platform, run = spawnSync, read = fs.readFileSync, find = systemProgram } = {}) {
   try {
-    if (platform === 'linux') return fs.readFileSync(`/proc/${pid}/cmdline`, 'utf8').includes('watch-main.mjs');
-    const ps = systemProgram(platform === 'win32' ? 'tasklist.exe' : 'ps', { platform });
+    if (platform === 'linux') return WATCHER.test(String(read(`/proc/${pid}/cmdline`, 'utf8')).replace(/\0/g, '\n'));
+    const ps = find(platform === 'win32' ? 'tasklist.exe' : 'ps', { platform });
 
     if (!ps) return false;
     const r = platform === 'win32' ? run(ps, ['/FI', `PID eq ${pid}`, '/FO', 'CSV', '/NH'], { encoding: 'utf8', windowsHide: true, timeout: 5000 }) : run(ps, ['-p', String(pid), '-o', 'command='], { encoding: 'utf8', timeout: 5000 });
 
-    if (platform !== 'win32') return String(r.stdout).includes('watch-main.mjs');
+    if (platform !== 'win32') return WATCHER.test(String(r.stdout).trim());
 
     // Windows: tasklist shows only the image name; the command line comes from PowerShell's
     // Win32_Process (fixed script, pid passed as a number).

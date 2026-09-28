@@ -27,6 +27,21 @@ async function waitFor(check, message, timeoutMs = 15000) {
   assert.fail(message);
 }
 
+// watch-main.mjs sets process.title, which on Linux and macOS rewrites the argument area: the
+// process table then shows the title, not the script path. Checked on every platform by feeding
+// what /proc and ps report.
+test('watcher identification survives the process title rewrite on Linux and macOS', () => {
+  const linux = (cmdline) => isWatcherProcess(42, { platform: 'linux', read: () => cmdline });
+  const mac = (command) => isWatcherProcess(42, { platform: 'darwin', find: () => '/bin/ps', run: () => ({ stdout: `${command}\n` }) });
+
+  assert.equal(linux('blackbrake watcher\0\0\0'), true, 'Linux after the title rewrite');
+  assert.equal(linux('/usr/bin/node\0/h/.blackbrake/app/src/guard/watch-main.mjs\0--background\0'), true, 'Linux before it');
+  assert.equal(mac('blackbrake watcher'), true, 'macOS after the title rewrite');
+  assert.equal(linux('/usr/bin/node\0server.js\0'), false, 'another node process is never taken for the watcher');
+  assert.equal(mac('/usr/bin/vim notes.txt'), false, 'another program is never taken for the watcher');
+  assert.equal(linux('blackbrake watch\0'), false, 'the alerts window is not the background watcher');
+});
+
 test('native macOS/Linux: login item starts the installed watcher and removal stops it', { skip: !POSIX_NATIVE, timeout: 30000 }, async () => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'bb-native-'));
   const home = path.join(root, '.blackbrake');
