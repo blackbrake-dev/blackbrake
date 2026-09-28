@@ -1,7 +1,7 @@
 // Opens a separate terminal window running `blackbrake watch` when an agent session starts, so the
 // alerts are in sight while the agent works. At most once per session, never if a watcher already
 // runs, and off with `blackbrake window off`. No shell anywhere: each terminal gets an argument list.
-import { spawn } from 'node:child_process';
+import { spawn, spawnSync } from 'node:child_process';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
@@ -76,8 +76,47 @@ export function windowEnv(env = process.env, home = null) {
   return out;
 }
 
+// An alerts window is `watch-main.mjs` without --background. It names itself 'blackbrake watch'
+// (process.title), which on Linux and macOS replaces the command line the process table shows; the
+// background watcher is 'blackbrake watcher'. The title must lead the command line.
+const WINDOW = (cmd) => /^blackbrake watch(?![\w-])/.test(cmd) || (/watch-main\.mjs/.test(cmd) && !/--background/.test(cmd));
+
+// Whether another alerts window is already open for this user, whichever guard folder it uses (a
+// copy run from a checkout or a relocated BLACKBRAKE_HOME keeps its pid file elsewhere, so the
+// per-folder check alone would open a second window). Reads the process table: /proc on Linux, ps
+// on macOS, a fixed PowerShell query on Windows. If it cannot tell, it says no and the per-folder
+// check still applies.
+export function liveWindowRunning({ platform = process.platform, run = spawnSync, find = systemProgram, readdir = fs.readdirSync, read = fs.readFileSync } = {}) {
+  const other = (pid) => Number(pid) !== process.pid;
+
+  try {
+    if (platform === 'linux') {
+      return readdir('/proc').filter((d) => /^\d+$/.test(d) && other(d)).some((pid) => {
+        try { return WINDOW(String(read(`/proc/${pid}/cmdline`, 'utf8')).replace(/\0+/g, ' ').trim()); } catch { return false; }
+      });
+    }
+
+    const lines = (text) => String(text ?? '').split(/\r?\n/).map((l) => l.match(/^\s*(\d+)\s+(.*)$/)).filter(Boolean);
+
+    if (platform === 'darwin') {
+      const ps = find('ps', { platform });
+
+      return Boolean(ps) && lines(run(ps, ['-axo', 'pid=,command='], { encoding: 'utf8', timeout: 5000 }).stdout).some(([, pid, cmd]) => other(pid) && WINDOW(cmd.trim()));
+    }
+
+    const pwsh = find('powershell.exe', { platform });
+
+    if (!pwsh) return false;
+    const r = run(pwsh, ['-NoProfile', '-NonInteractive', '-Command', 'Get-CimInstance Win32_Process -Filter "Name=\'node.exe\'" | ForEach-Object { "$($_.ProcessId)`t$($_.CommandLine)" }'], { encoding: 'utf8', windowsHide: true, timeout: 10000 });
+
+    return lines(String(r.stdout ?? '').replace(/\t/g, ' ')).some(([, pid, cmd]) => other(pid) && WINDOW(cmd));
+  } catch {
+    return false;
+  }
+}
+
 // Called from the hook on every event; cheap when there is nothing to do.
-export function maybeOpenWindow(sessionId, { home = guardHome(), env = process.env, cli, spawner = spawn, command = windowCommand } = {}) {
+export function maybeOpenWindow(sessionId, { home = guardHome(), env = process.env, cli, spawner = spawn, command = windowCommand, running = liveWindowRunning } = {}) {
   // The user's setting decides; an agent that sets CI for its tools does not hide the window.
   // BLACKBRAKE_NO_WINDOW is for blackbrake's own tests (an agent writing it into its settings is
   // refused by guard as tampering).
@@ -98,6 +137,15 @@ export function maybeOpenWindow(sessionId, { home = guardHome(), env = process.e
   } catch { /* no recent claim */ }
 
   try { fs.writeFileSync(claim, String(process.pid), { flag: 'wx', mode: 0o600 }); } catch { return false; }
+
+  // Only now, once per session and after the hook has answered: one process-table read. A window
+  // already open serves this session too; the session is marked so it is not asked again.
+  if (running()) {
+    setSession(sessionId, { windowOpened: new Date().toISOString() }, home);
+    fs.rmSync(claim, { force: true });
+
+    return false;
+  }
 
   setSession(sessionId, { windowOpened: new Date().toISOString() }, home);
   const c = command(process.execPath, cli);
