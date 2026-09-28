@@ -42,8 +42,6 @@ const PLACEHOLDER = /(^|[^a-z0-9])(example|sample|dummy|placeholder|changeme|red
 export function isExampleValue(secret) {
   if (KNOWN_EXAMPLES.has(secret)) return true;
 
-  if (/^(sk|pk|rk)_test_/.test(secret)) return true;
-
   if (CODE_EXPRESSION.test(secret)) return true;
 
   if (/^["'`]?[A-Za-z_-]{1,16}["'`]?$/.test(secret)) return true;
@@ -51,7 +49,7 @@ export function isExampleValue(secret) {
   if (PLACEHOLDER.test(secret)) return true;
 
   // AWS documents its sample keys with this suffix (AKIA… ending in EXAMPLE).
-  if (/EXAMPLE(KEY)?$/.test(secret)) return true;
+  if (/^AKIA[A-Z0-9]*EXAMPLE$/.test(secret)) return true;
 
   // Almost no variety (an AWS key id made of one repeated letter): typed by hand, not generated.
   return new Set(secret).size < 6;

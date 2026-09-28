@@ -23,6 +23,7 @@ const noAsk = () => ` ${t('(This agent cannot ask for confirmation, so blackbrak
 const maskedResult = (out) => `[${t('blackbrake hid credentials in this result')}]\n${textOf(hiddenOf(out))}`;
 
 const parse = (v) => {
+  // oxlint-disable-next-line anti-slop/no-runtime-typeof -- Validate untrusted JSON or assert the boundary contract; preserve primitive type checks.
   if (typeof v !== 'string') return v ?? {};
 
   try { return JSON.parse(v); } catch { return v; }
@@ -47,6 +48,7 @@ function patchFiles(patch = '', cwd = '') {
 // A patch-shaped edit (Codex and Copilot apply_patch): the files come from the patch itself.
 const patchInput = (raw, tool_input) => {
   const patch = String(tool_input?.command ?? tool_input?.input ?? tool_input?.patch ?? '');
+  // oxlint-disable-next-line anti-slop/no-runtime-typeof -- Validate untrusted JSON or assert the boundary contract; preserve primitive type checks.
   const files = patchFiles(patch, typeof raw.cwd === 'string' ? raw.cwd : '');
 
   return { file_path: files[0] ?? '', files, new_string: patch };
@@ -58,6 +60,8 @@ const codex = {
   events: { SessionStart: 'SessionStart', UserPromptSubmit: 'UserPromptSubmit', PreToolUse: 'PreToolUse', PostToolUse: 'PostToolUse', PostCompact: 'PostCompact', SessionEnd: 'SessionEnd' },
   normalize(event, raw) {
     if (raw.tool_name === 'apply_patch') return { event, input: { ...raw, tool_name: 'Edit', tool_input: patchInput(raw, raw.tool_input) } };
+
+    if (raw.tool_name === 'write_stdin') return { event, input: { ...raw, tool_name: 'Bash', tool_input: { ...raw.tool_input, command: String(raw.tool_input?.chars ?? '') } } };
 
     // Codex's shell tools (the command may be an argument list): checked as Bash.
     if (/^(shell|local_shell|unified_exec|exec_command|container\.exec)$/.test(String(raw.tool_name ?? ''))) {
@@ -161,10 +165,8 @@ const cursor = {
     preCompact: 'PostCompact',
     sessionEnd: 'SessionEnd',
   },
-  // Cursor's dedicated hooks cover shell, reads and MCP; preToolUse is kept for writes and edits.
-  skip(native, raw) {
-    return native === 'preToolUse' && /^(Shell|Terminal|Read|ReadFile|MCP)/i.test(String(raw.tool_name ?? ''));
-  },
+  // Check generic hooks too: a dedicated hook may be absent or have failed.
+
   normalize(event, raw, native) {
     const session_id = raw.conversation_id;
 
@@ -180,7 +182,13 @@ const cursor = {
 
     const name = String(raw.tool_name ?? '');
     const ti = parse(raw.tool_input);
+    // oxlint-disable-next-line anti-slop/no-runtime-typeof -- Validate untrusted JSON or assert the boundary contract; preserve primitive type checks.
     const input = ti && typeof ti === 'object' ? ti : {};
+
+    if (/^(Shell|Terminal)$/.test(name)) return { event, input: { ...raw, session_id, tool_name: 'Bash', tool_input: { ...input, command: input.command } } };
+
+    if (/^(Read|ReadFile)$/.test(name)) return { event, input: { ...raw, session_id, tool_name: 'Read', tool_input: { ...input, file_path: input.file_path ?? input.path } } };
+
     // Deleting, moving or renaming a file is checked like writing to it.
     const file = input.file_path ?? input.target_file ?? input.path ?? input.target ?? input.destination;
     const tool_name = /^(Write|Create|Delete|Remove|Move|Rename)/i.test(name) ? 'Write' : /^(Edit|Str_?Replace|Replace|MultiEdit)/i.test(name) ? 'Edit' : /^web_?fetch$/i.test(name) ? 'WebFetch' : name;
@@ -222,6 +230,7 @@ const cursor = {
 // Editor tools name their fields differently (path, file_text, old_str, new_str): the checks read
 // Claude's names, so these are copied across (originals kept).
 const editorFields = (ti) => {
+  // oxlint-disable-next-line anti-slop/no-runtime-typeof -- Validate untrusted JSON or assert the boundary contract; preserve primitive type checks.
   if (!ti || typeof ti !== 'object') return ti;
 
   return { ...ti, file_path: ti.file_path ?? ti.path ?? ti.filePath, content: ti.content ?? ti.file_text ?? ti.fileText, old_string: ti.old_string ?? ti.old_str ?? ti.oldText, new_string: ti.new_string ?? ti.new_str ?? ti.new_text ?? ti.insert_text ?? ti.newText };
@@ -314,13 +323,15 @@ const devin = {
     if (event !== 'PreToolUse' && event !== 'PostToolUse') return { event, input: raw };
     const name = String(raw.tool_name ?? '');
     const ti = parse(raw.tool_input);
+    // oxlint-disable-next-line anti-slop/no-runtime-typeof -- Validate untrusted JSON or assert the boundary contract; preserve primitive type checks.
     const a = ti && typeof ti === 'object' ? ti : {};
     const file = a.file_path ?? a.path ?? a.notebook_path;
     let tool_name = name;
     let tool_input = a;
 
     // If the command is not where expected, the whole argument list is checked as the command.
-    if (name === 'exec') [tool_name, tool_input] = ['Bash', { command: typeof a.command === 'string' ? a.command : JSON.stringify(a) }];
+    // oxlint-disable-next-line anti-slop/no-runtime-typeof -- Validate untrusted JSON or assert the boundary contract; preserve primitive type checks.
+    if (name === 'exec') [tool_name, tool_input] = ['Bash', { ...a, command: typeof a.command === 'string' ? a.command : JSON.stringify(a) }];
     // Text typed into a running process is a command too.
     else if (name === 'write_to_process') [tool_name, tool_input] = ['Bash', { command: String(a.text_input ?? a.bytes_input ?? '') }];
     else if (name === 'read' || name === 'notebook_read') [tool_name, tool_input] = ['Read', { ...a, file_path: file }];
@@ -362,9 +373,19 @@ const claude = {
 
 export const ADAPTERS = { claude, codex, gemini, cursor, copilot, windsurf, devin };
 
-// What an adapter prints when guard itself fails: never block the agent, say it once.
-export function renderError(harness, native, message) {
+// A recoverable failure must not become permission in protect. An externally killed hook is still
+// subject to the host agent's timeout policy; no process can answer after it has been killed.
+export function renderError(harness, native, message, mode = 'observe') {
   const a = ADAPTERS[harness] ?? claude;
+  const event = Object.hasOwn(a.events, native) ? a.events[native] : 'PreToolUse';
+
+  if (mode === 'protect') {
+    if (event === 'UserPromptSubmit') return a.render(event, { decision: 'block', reason: message }, { native, input: {} });
+
+    if (event === 'PreToolUse') return a.render(event, { hookSpecificOutput: { hookEventName: event, permissionDecision: 'deny', permissionDecisionReason: message } }, { native, input: {} });
+
+    if (event === 'PostToolUse') return a.render(event, { systemMessage: message, hookSpecificOutput: { hookEventName: event, updatedToolOutput: message } }, { native, input: {} });
+  }
 
   if (a === cursor) return native === 'beforeSubmitPrompt' ? json({ continue: true }) : native.startsWith('before') || native === 'preToolUse' ? json({ ...ALLOW, user_message: message }) : none;
 

@@ -119,8 +119,9 @@ export function createFollower(harnesses = watchedHarnesses(), { maxFiles = 2000
 
         // A file that shrank was rewritten: start again from its beginning.
         if (st.size < done) sizes.set(file, 0);
-        const end = Math.min(st.size, (sizes.get(file) ?? 0) + Math.min(PER_FILE, left));
-        const from = Math.max(0, (sizes.get(file) ?? 0) - OVERLAP);
+        const offset = sizes.get(file) ?? 0;
+        const from = Math.max(0, offset - Math.min(OVERLAP, Math.floor(left / 2)));
+        const end = Math.min(st.size, from + Math.min(PER_FILE, left));
 
         if (end <= (sizes.get(file) ?? 0)) continue;
         const len = end - from;

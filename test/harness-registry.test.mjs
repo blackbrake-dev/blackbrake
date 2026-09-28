@@ -161,6 +161,24 @@ test('permissions checklist: boxes, headings, keys (space, a, enter, q) and no t
   input.emit('keypress', ' ', { name: 'space' });
   input.emit('keypress', '', { name: 'return' });
   assert.deepEqual(await done, { 'h:codex': true, observe: false });
+
+  // The "continue" button sits on top, selected first: space or enter on it saves as it is.
+  const proceed = { label: 'Continue: save and open the main menu', hint: 'or press enter anywhere' };
+  const top = renderChecklist(p, [{ proceed: true, ...proceed }, ...items], 0).join('\n');
+  assert.match(top.split('\n')[0], /❯ ▶ Continue: save and open the main menu/);
+  assert.match(top, /❯ ▶ .*\n[\s\S]*■ Codex {2,}/, 'the long button label does not widen the boxes');
+
+  for (const key of ['space', 'return']) {
+    const saved = checklist(p, items, { input, output, proceed });
+    input.emit('keypress', key === 'space' ? ' ' : '', { name: key });
+    assert.deepEqual(await saved, { 'h:codex': true, observe: true }, `${key} on continue saves, nothing toggled`);
+  }
+
+  // "a" toggles only the boxes, never the button.
+  const all = checklist(p, items, { input, output, proceed });
+  input.emit('keypress', 'a', { name: 'a' });
+  input.emit('keypress', '', { name: 'return' });
+  assert.deepEqual(await all, { 'h:codex': false, observe: false });
 });
 
 test('screens share the brand header; the alerts window opens in blackbrake orange', async () => {
@@ -171,6 +189,7 @@ test('screens share the brand header; the alerts window opens in blackbrake oran
   assert.match(lines[2], /Brakey: hello/, 'and its line about the screen');
   assert.match(lines[4], /━{20,}/);
   const lit = screen(createPainter(3), 'HELP', 'main commands', 80);
+  // oxlint-disable-next-line no-control-regex -- Check the exact ANSI colour emitted to the terminal.
   assert.match(lit.join('\n'), /\x1b\[38;2;255;90;31m━/, 'the rule starts in brand orange (then fades)');
   assert.ok(windowCommand('C:\\n\\node.exe', 'C:\\w.mjs', { platform: 'win32', find: (n) => `/sys/${n}` }).args.includes('#FF5A1F'));
 });
@@ -235,6 +254,7 @@ test('menu: numbers pick an option straight away', async () => {
 
 test('menu: the live session shows ACTIVE (green, filled) or NOT ACTIVE (grey, hollow); help is there', () => {
   const p = createPainter(3);
+  // oxlint-disable-next-line no-control-regex -- Check the exact ANSI colour emitted to the terminal.
   assert.match(liveBadge(p, true), /\x1b\[48;2;91;214;138m/, 'green background');
   assert.match(strip(liveBadge(p, true)), /● ACTIVE/);
   assert.match(strip(liveBadge(p, false)), /○ NOT ACTIVE/);

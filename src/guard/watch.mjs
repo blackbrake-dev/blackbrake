@@ -18,18 +18,29 @@ export const LEVELS = ['low', 'medium', 'high', 'critical'];
 // What each event means for security. A secret that still went out (observe) is worse than one
 // guard stopped; an attempt to switch guard off is the maximum either way.
 export function severity(e) {
+  // oxlint-disable-next-line anti-slop/no-runtime-typeof -- Validate untrusted JSON or assert the boundary contract; preserve primitive type checks.
+  if (!e || typeof e !== 'object' || Array.isArray(e) || typeof e.action !== 'string') return null;
   const stopped = /^(blocked|denied|redacted|asked)$/.test(String(e.action));
 
   switch (e.kind) {
-    case 'tamper': return 'critical';
+    case 'tamper':
+    case 'tamper-script': return 'critical';
     case 'secret-in-prompt':
     case 'secret-in-output':
     case 'secret-in-request':
-    case 'secret-in-command': return stopped ? 'high' : 'critical';
+    case 'secret-in-command':
+    case 'exfiltration': return stopped ? 'high' : 'critical';
     case 'secret-in-write':
     case 'secret-dump':
+    case 'credential-access':
+    case 'remote-exec':
+    case 'persistence':
+    case 'permission-bypass':
+    case 'destructive-severe':
     case 'destructive-after-compaction': return stopped ? 'medium' : 'high';
+    case 'destructive-command': return stopped ? 'low' : 'medium';
     case 'secret-in-history': return 'high';
+    case 'prompt-injection': return 'medium';
     case 'sensitive-read':
     case 'opaque-command': return stopped ? 'low' : 'medium';
     case 'error': return 'low';
@@ -49,6 +60,15 @@ const KIND_TEXT = {
   'secret-dump': 'command that prints secrets',
   'opaque-command': 'command that cannot be checked',
   'destructive-after-compaction': 'destructive command after compaction',
+  'destructive-command': 'destructive command',
+  'destructive-severe': 'command that destroys data for good',
+  exfiltration: 'data leaving the machine',
+  'credential-access': 'credential store accessed',
+  'remote-exec': 'code downloaded and run',
+  persistence: 'something set to run later',
+  'permission-bypass': 'agent started without permission checks',
+  'prompt-injection': 'possible prompt injection',
+  'tamper-script': 'script written to switch guard off',
   tamper: 'attempt to switch guard off',
   error: 'guard could not check a step',
   'secret-in-history': 'secret written in an agent\'s history',
@@ -63,9 +83,11 @@ const BADGE = {
 
 export function eventLine(p, e) {
   const level = severity(e);
+
+  if (!level) return '';
   const time = clean(e.ts, 30).slice(11, 19);
   const agent = AGENT_NAMES[e.harness ?? 'claude'] ?? clean(e.harness, 20);
-  const detail = [e.tool, e.rule].filter(Boolean).map((x) => clean(x, 50)).join(' · ');
+  const detail = [e.tool, e.rule].flatMap((x) => x ? [clean(x, 50)] : []).join(' · ');
 
   // Brakey's face for the level: calm, worried, alarmed.
   const face = mini(p, { low: 'idle', medium: 'worried', high: 'alert', critical: 'alert' }[level]);
@@ -78,6 +100,7 @@ export function runningAgents(events, now = Date.now(), windowMs = 15 * 60e3) {
   const seen = new Map();
 
   for (const e of events) {
+    if (!validEvent(e)) continue;
     const at = Date.parse(e.ts);
 
     // A time in the future is a forged or broken line: it would stay "running" forever.
@@ -94,8 +117,14 @@ export function runningAgents(events, now = Date.now(), windowMs = 15 * 60e3) {
 
 // ---------- reading the log as it grows ----------
 
+// oxlint-disable-next-line anti-slop/no-runtime-typeof -- Validate untrusted JSON or assert the boundary contract; preserve primitive type checks.
+const validEvent = (e) => Boolean(e && !Array.isArray(e) && typeof e.ts === 'string' && Number.isFinite(Date.parse(e.ts)) && typeof e.kind === 'string' && typeof e.action === 'string' && ['harness', 'tool', 'rule', 's'].every((key) => e[key] === undefined || typeof e[key] === 'string') && (e.harness === undefined || Object.hasOwn(AGENT_NAMES, e.harness)));
+
 export function createTail(home = guardHome()) {
   const offsets = new Map();
+  let initialized = false;
+  let start = -1;
+  const chunk = 4 * 1024 * 1024;
 
   return {
     // Everything appended since the last call (the first call starts at the end of each file).
@@ -103,52 +132,75 @@ export function createTail(home = guardHome()) {
       const dir = logDir(home);
       const out = [];
       let files = [];
+      let left = chunk;
 
-      try { files = fs.readdirSync(dir).filter((f) => /^\d{4}-\d{2}\.jsonl$/.test(f)).sort(); } catch { return out; }
+      try { files = fs.readdirSync(dir).filter((f) => /^\d{4}-\d{2}\.jsonl$/.test(f)).sort(); } catch { /* removed logs are forgotten */ }
 
-      for (const name of files) {
+      const present = new Set(files);
+
+      for (const name of offsets.keys()) if (!present.has(name)) offsets.delete(name);
+      start = files.length ? (start + 1) % files.length : 0;
+
+      for (const name of [...files.slice(start), ...files.slice(0, start)]) {
+        if (left <= 0) break;
         const file = path.join(dir, name);
-        let size = 0;
+        let st;
 
-        try {
-          const st = fs.lstatSync(file);
+        try { st = fs.lstatSync(file); } catch { continue; }
 
-          if (!st.isFile()) continue;
-          size = st.size;
-        } catch { continue; }
+        if (!st.isFile()) continue;
+        let cursor = offsets.get(name);
 
-        const from = offsets.get(file) ?? (fromStart ? 0 : size);
+        if (!cursor || cursor.ino !== st.ino || cursor.dev !== st.dev || st.size < cursor.pos) cursor = { pos: !initialized && !fromStart ? st.size : 0, ino: st.ino, dev: st.dev, skip: false };
+        offsets.set(name, cursor);
+        const from = cursor.pos;
 
-        if (size <= from) {
-          offsets.set(file, size);
-          continue;
-        }
+        if (st.size <= from) continue;
 
         // Read only the new bytes, at most 4 MB at a time.
-        const len = Math.min(size - from, 4 * 1024 * 1024);
+        const len = Math.min(st.size - from, left);
         const buf = Buffer.alloc(len);
         // A log removed or swapped for a link in between is skipped, never followed or crashed on.
         let fd;
+        let got = 0;
 
         try {
-          fd = fs.openSync(file, fs.constants.O_RDONLY | (fs.constants.O_NOFOLLOW ?? 0));
+          fd = fs.openSync(file, fs.constants.O_RDONLY | (fs.constants.O_NOFOLLOW ?? 0) | (fs.constants.O_NONBLOCK ?? 0));
+          const fst = fs.fstatSync(fd);
 
-          if (!fs.fstatSync(fd).isFile()) continue;
-          fs.readSync(fd, buf, 0, len, from);
+          if (!fst.isFile() || fst.ino !== st.ino || fst.dev !== st.dev) continue;
+          got = fs.readSync(fd, buf, 0, len, from);
         } catch { continue; } finally {
           if (fd !== undefined) fs.closeSync(fd);
         }
 
-        const text = buf.toString('utf8');
-        const end = text.lastIndexOf('\n') + 1;
-        offsets.set(file, from + Buffer.byteLength(text.slice(0, end)));
+        left -= got;
+        const bytes = buf.subarray(0, got);
+        const end = bytes.lastIndexOf(10) + 1;
+        const begin = cursor.skip ? bytes.indexOf(10) + 1 : 0;
 
-        for (const line of text.slice(0, end).split('\n')) {
-          if (!line) continue;
+        // A line larger than a whole tick is invalid. Drain it rather than rereading it forever.
+        if (!end) {
+          if (cursor.skip || got === chunk) { cursor.pos += got; cursor.skip = true; }
 
-          try { out.push(JSON.parse(line)); } catch { /* partial or foreign line */ }
+          continue;
+        }
+
+        cursor.pos = from + end;
+        cursor.skip = false;
+
+        for (const line of bytes.subarray(begin, end).toString('utf8').split('\n')) {
+          if (!line || line.length > 16384) continue;
+
+          try {
+            const e = JSON.parse(line);
+
+            if (validEvent(e)) out.push(e);
+          } catch { /* partial or foreign line */ }
         }
       }
+
+      initialized = true;
 
       return out;
     },
