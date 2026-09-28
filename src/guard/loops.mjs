@@ -2,16 +2,25 @@ import crypto from 'node:crypto';
 
 const canonical = (value, seen = new Set()) => {
   if (value === null) return ['null'];
+  // oxlint-disable-next-line anti-slop/no-runtime-typeof -- Canonicalization intentionally preserves every JavaScript input type.
   const type = typeof value;
 
   if (type === 'string') return ['string', value.normalize('NFC')];
+
   if (type === 'number') return ['number', Number.isFinite(value) ? value : String(value)];
+
   if (type === 'boolean') return ['boolean', value];
+
   if (type === 'undefined') return ['undefined'];
+
   if (type === 'bigint') return ['bigint', String(value)];
+
   if (type !== 'object') return [type, String(value)];
+
   if (seen.has(value)) throw new TypeError('Cyclic tool arguments');
+
   seen.add(value);
+
   const out = Array.isArray(value)
     ? ['array', value.map((item) => canonical(item, seen))]
     : ['object', Object.keys(value).sort().map((key) => [key.normalize('NFC'), canonical(value[key], seen)])];

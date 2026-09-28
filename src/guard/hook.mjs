@@ -430,16 +430,20 @@ async function main() {
     // only aggregates and HMACs; any failure leaves the security decision untouched.
     try {
       const secret = getSpendSecret(home);
+      // oxlint-disable-next-line anti-slop/no-runtime-typeof -- Session state is untrusted JSON read at this boundary.
       const spend = session.spend && typeof session.spend === 'object' ? { ...session.spend } : {};
       const notices = [];
       const spendLog = [];
+      // oxlint-disable-next-line anti-slop/no-runtime-typeof -- Normalized hook input is validated at this boundary.
       const realPrompt = event === 'UserPromptSubmit' && typeof input.prompt === 'string' && !isHarnessText(input.prompt);
+      // oxlint-disable-next-line anti-slop/no-runtime-typeof -- Native transcript paths are validated before any read.
       const transcript = harness === 'claude' && typeof input.transcript_path === 'string' ? input.transcript_path : null;
 
       if (transcript && spend.open) {
         const root = process.env.CLAUDE_CONFIG_DIR && path.isAbsolute(process.env.CLAUDE_CONFIG_DIR)
           ? path.join(process.env.CLAUDE_CONFIG_DIR, 'projects')
           : path.join(os.homedir(), '.claude', 'projects');
+
         const tailed = tailTranscript(transcript, { roots: [root], state: spend.tail });
         const usage = accountTranscriptRecords(tailed.records, { responses: spend.responses }, secret);
         spend.tail = tailed.state;

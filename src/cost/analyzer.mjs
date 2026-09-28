@@ -17,6 +17,7 @@ const userPromptText = (msg) => {
   const blocks = Array.isArray(msg.content) ? msg.content : [{ type: 'text', text: msg.content }];
 
   if (blocks.some((b) => b?.type === 'tool_result')) return null;
+  // oxlint-disable-next-line anti-slop/no-runtime-typeof -- Transcript JSON is validated here at its message boundary.
   const text = blocks.filter((b) => b?.type === 'text' && typeof b.text === 'string').map((b) => b.text).join('\n').trim();
 
   return text && !isHarnessText(text) ? text : null;

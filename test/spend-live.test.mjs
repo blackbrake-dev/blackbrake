@@ -105,6 +105,7 @@ test('baseline-from-existing-history-without-declarations', async () => {
     rows.push({ requestId: `req-${i}`, timestamp: new Date(i * 1000 + 1).toISOString(), message: assistant(`answer-${i}`, i + 1) });
     rows.push({ requestId: `req-${i}`, timestamp: new Date(i * 1000 + 2).toISOString(), message: assistant(`answer-${i}`, i + 1) });
   }
+
   fs.writeFileSync(file, `${rows.map((row) => JSON.stringify(row)).join('\n')}\n`);
   const summary = await summarizeHistory({ root, harness: 'claude' });
 
@@ -131,6 +132,7 @@ test('background-baseline-persists-aggregates-only', async () => {
     rows.push({ message: { role: 'user', content: `fixture ${i}` } });
     rows.push({ requestId: `request-${i}`, message: assistant(`response-${i}`, 100) });
   }
+
   fs.writeFileSync(path.join(root, 'history.jsonl'), `${rows.map(JSON.stringify).join('\n')}\n`);
   const summary = await ensureSpendBaseline({ home, root });
   const saved = fs.readFileSync(path.join(home, 'spend', 'baseline.json'), 'utf8');

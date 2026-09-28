@@ -32,6 +32,7 @@ export function applyEpisodeEvent(previous = {}, update) {
     state.open = { start: update.at, cost: 0, responses: 0, label: null, costAlerted: false };
   } else if (update.event === 'AssistantUsage' && state.open) {
     state.open.cost += finite(update.costDelta) ? update.costDelta : 0;
+
     if (update.response) state.open.responses++;
   }
 
@@ -46,10 +47,13 @@ export function labelEpisode(previous, label) {
 
 export function spendAlert({ baseline, episode, mode = 'observe', canAsk = false }) {
   if (!baseline?.ready || !episode || episode.costAlerted || !finite(episode.cost) || episode.cost <= baseline.p90) return null;
+
   episode.costAlerted = true;
+
   const base = t('blackbrake: this episode is at API≈${cost} across {responses} responses; above your local p90 API≈${p90} for this agent (median API≈${median}; {episodes} episodes, list prices).', {
     cost: episode.cost.toFixed(2), responses: episode.responses ?? 0, p90: baseline.p90.toFixed(2), median: baseline.p50.toFixed(2), episodes: baseline.n,
   });
+
   const message = `${base} ${t(mode === 'protect' && canAsk ? 'Continue?' : 'Warning: review whether to continue.')}`;
 
   return { action: mode === 'protect' && canAsk ? 'ask' : 'warn', message };

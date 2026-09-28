@@ -161,7 +161,7 @@ export function logLines(p, { days = 7 } = {}) {
   if (!events.length) return [...out, `  ${p.faint(t('Nothing yet.'))}`, ''];
 
   // Log lines are data on disk: every field is cleaned before it reaches the terminal.
-  for (const e of events) out.push(`  ${p.faint(clean(e.ts, 20).slice(0, 16).replace('T', ' '))}  ${padEnd(t(KIND[e.kind]), 40)} ${p.cream(padEnd(t(clean(e.action, 12)), 10))} ${p.faint([e.tool, e.rule].filter(Boolean).map((x) => clean(x, 60)).join(' · '))}`);
+  for (const e of events) out.push(`  ${p.faint(clean(e.ts, 20).slice(0, 16).replace('T', ' '))}  ${padEnd(t(KIND[e.kind]), 40)} ${p.cream(padEnd(t(clean(e.action, 12)), 10))} ${p.faint([e.tool, e.rule].flatMap((x) => x ? [clean(x, 60)] : []).join(' · '))}`);
 
   return [...out, ''];
 }

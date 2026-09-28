@@ -373,12 +373,15 @@ function liveFooter(p, out, count, motion) {
 export async function watch(p, { home = guardHome(), out = process.stdout, intervalMs = 700, once = false, notifier = notify, keys = false, backHint = null } = {}) {
   fs.mkdirSync(home, { recursive: true, mode: 0o700 });
   writePrivate(lockFile(home), String(process.pid));
+
   // Full history stays off the hook's hot path. The normal installed watcher refreshes the local
   // aggregate; injected test homes and embedders can call ensureSpendBaseline explicitly.
   if (path.resolve(home) === path.resolve(guardHome())) {
     try { await ensureSpendBaseline({ home }); } catch { /* no readable history means no threshold */ }
+
     try { ensureInventoryDelta({ home }); } catch { /* an unavailable inventory does not stop alerts */ }
   }
+
   const tail = createTail(home);
   // The last hour, for context; then only what is new.
   const history = tail.read(true).filter(recentEvent);

@@ -35,6 +35,7 @@ export function tailTranscript(file, { roots = [], state = {}, maxBytes = 1024 *
   const fd = fs.openSync(realFile, 'r');
 
   try { fs.readSync(fd, bytes, 0, length, offset); } finally { fs.closeSync(fd); }
+
   const newline = bytes.lastIndexOf(0x0a);
 
   if (newline < 0) return { records: [], state: { offset, size: stat.size, identity } };
@@ -73,11 +74,13 @@ export async function summarizeHistory({ root = defaultRoot(), harness = 'claude
 
 export function accountTranscriptRecords(records, previous = {}, secret) {
   if (!secret) throw new TypeError('Usage ledger secret is required');
+
   const keyOf = (record, msg) => {
     const id = msg.id ?? record.requestId ?? null;
 
     return id === null ? null : crypto.createHmac('sha256', secret).update(String(id)).digest('hex');
   };
+
   const ledger = createUsageLedger({ keyOf, entries: previous.responses ?? [] });
   let costDelta = 0;
   let responseDelta = 0;
@@ -87,9 +90,11 @@ export function accountTranscriptRecords(records, previous = {}, secret) {
     const msg = record?.message;
 
     if (msg?.role !== 'assistant' || !msg.usage) continue;
+
     const result = ledger.account(record, msg);
     costDelta += result.delta;
     tokensDelta += result.sizeDelta;
+
     if (result.first) responseDelta++;
   }
 

@@ -11,6 +11,7 @@ import { baselineFromEpisodes, spendAlert, spendTextTokens, withinTokenBudget } 
 import { appendSpendEpisode, getSession, getSpendBaseline, readLog, setMode, setSpendBaseline } from '../src/guard/state.mjs';
 
 const episodes = (n) => Array.from({ length: n }, (_, i) => ({ cost: i + 1, responses: i % 4 + 1 }));
+
 const assistantMessage = (id, output = 100) => ({ id, role: 'assistant', model: 'claude-sonnet-5', content: [], usage: { input_tokens: 10_000, output_tokens: output } });
 
 test('baseline-from-existing-history-without-declarations', () => {
@@ -102,6 +103,7 @@ test('spend-log-is-aggregate-only-and-private', () => {
 
   assert.equal(files.includes(sentinel), false);
   assert.deepEqual(getSpendBaseline('claude', home), { harness: 'claude', n: 30, p50: 1, p90: 3, ready: true });
+
   if (process.platform !== 'win32') assert.equal(fs.statSync(path.join(home, 'spend', 'baseline.json')).mode & 0o777, 0o600);
 });
 
@@ -137,6 +139,7 @@ test('loop-mode-observe-warns-and-protect-asks', () => {
 
     return { output: result.stdout ? JSON.parse(result.stdout) : null, log: readLog(home) };
   };
+
   const observed = run('observe');
   const protectedResult = run('protect');
 
@@ -220,6 +223,7 @@ test('spend-added-latency-budget', () => {
     detector.record('Read', { path: `fixture-${run}`, nested: { b: 2, a: 1 } }, run);
     samples.push(performance.now() - start);
   }
+
   samples.sort((a, b) => a - b);
   assert.ok(samples[Math.floor(samples.length * 0.95)] < 20);
 });

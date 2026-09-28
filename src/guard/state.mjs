@@ -200,13 +200,17 @@ export function setSpendBaseline(harness, baseline, home = guardHome()) {
 }
 
 export function appendSpendEpisode(episode, home = guardHome()) {
+  // oxlint-disable-next-line anti-slop/no-runtime-typeof -- Public persistence boundary: only an ISO timestamp may cross it.
+  const at = typeof episode?.at === 'string' && /^\d{4}-\d{2}-\d{2}T/.test(episode.at) ? episode.at : new Date().toISOString();
+
   const safe = {
-    at: typeof episode?.at === 'string' && !Number.isNaN(Date.parse(episode.at)) ? episode.at : new Date().toISOString(),
+    at,
     harness: /^[a-z][a-z0-9-]{0,31}$/.test(episode?.harness) ? episode.harness : 'unknown',
     cost: Number.isFinite(episode?.cost) && episode.cost >= 0 ? episode.cost : 0,
     responses: Number.isInteger(episode?.responses) && episode.responses >= 0 ? episode.responses : 0,
-    ...( ['valid', 'invalid', 'unrated'].includes(episode?.label) ? { label: episode.label } : {}),
   };
+
+  if (['valid', 'invalid', 'unrated'].includes(episode?.label)) safe.label = episode.label;
 
   writePrivate(path.join(spendDir(home), 'episodes.jsonl'), `${JSON.stringify(safe)}\n`, 'a');
 }
@@ -216,7 +220,9 @@ export function getSpendSecret(home = guardHome()) {
   let encoded = null;
 
   try { encoded = fs.readFileSync(file, 'utf8').trim(); } catch { /* create below */ }
+
   if (/^[A-Za-z0-9+/]{43}=$/.test(encoded ?? '')) return Buffer.from(encoded, 'base64');
+
   const secret = crypto.randomBytes(32);
   writePrivate(file, `${secret.toString('base64')}\n`);
 
