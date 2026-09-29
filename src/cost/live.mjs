@@ -10,6 +10,10 @@ import { baselineFromEpisodes } from '../guard/spend.mjs';
 
 const localAbsolute = (file) => path.isAbsolute(file) && !/^[\\/]{2}/.test(file);
 
+const CLAUDE_SESSION_ID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+
+const CLAUDE_SUBAGENT_FILE = /^agent-[0-9a-f]{8,64}\.jsonl$/i;
+
 const inside = (root, file) => {
   const rel = path.relative(root, file);
 
@@ -41,6 +45,75 @@ const trustedFile = (file, roots) => {
 
   return current;
 };
+
+// Real Claude Code data (checked before F5.7) keeps direct agent-<hex>.jsonl children under
+// <project>/<parent session UUID>/subagents. Enumerate only that observed layout: no recursive walk,
+// no journals, no link/junction traversal, and bounded entries/files. The returned paths are used in
+// memory only; callers persist an HMAC key, never a path or agent id.
+export function listClaudeSubagentFiles(file, sessionId, {
+  roots = [], maxEntries = 256, maxFiles = 128, maxFileBytes = 32 * 1024 * 1024,
+} = {}) {
+  if (!CLAUDE_SESSION_ID.test(String(sessionId ?? ''))) return [];
+  const main = trustedFile(file, roots);
+
+  if (path.basename(main) !== `${sessionId}.jsonl`) return [];
+
+  const realRoots = roots.flatMap((root) => {
+    if (!localAbsolute(root)) return [];
+
+    try { return [fs.realpathSync(root)]; } catch { return []; }
+  });
+
+  const root = realRoots.find((candidate) => inside(candidate, main));
+
+  if (!root) return [];
+  const relative = path.relative(root, main).split(path.sep).filter(Boolean);
+
+  // A parent transcript is a direct child of one project directory. This prevents a crafted
+  // transcript deeper in the tree from selecting an unrelated sibling as its child-session root.
+  if (relative.length !== 2) return [];
+  const sessionRoot = path.join(path.dirname(main), sessionId);
+  const childRoot = path.join(sessionRoot, 'subagents');
+  let sessionStat;
+  let rootStat;
+
+  try {
+    sessionStat = fs.lstatSync(sessionRoot);
+    rootStat = fs.lstatSync(childRoot);
+  } catch { return []; }
+
+  if (sessionStat.isSymbolicLink() || !sessionStat.isDirectory() || rootStat.isSymbolicLink() || !rootStat.isDirectory()) return [];
+  const entriesLimit = Math.max(0, Math.min(4096, Math.trunc(maxEntries)));
+  const filesLimit = Math.max(0, Math.min(1024, Math.trunc(maxFiles)));
+  const bytesLimit = Number.isFinite(maxFileBytes) && maxFileBytes >= 0 ? maxFileBytes : 0;
+  const out = [];
+  let dir;
+
+  try {
+    dir = fs.opendirSync(childRoot);
+
+    for (let seen = 0; seen < entriesLimit && out.length < filesLimit; seen++) {
+      const entry = dir.readSync();
+
+      if (!entry) break;
+
+      if (!CLAUDE_SUBAGENT_FILE.test(entry.name) || !entry.isFile() || entry.isSymbolicLink()) continue;
+      const child = path.join(childRoot, entry.name);
+      let stat;
+
+      try { stat = fs.lstatSync(child); } catch { continue; }
+
+      if (!stat.isFile() || stat.isSymbolicLink() || stat.nlink > 1 || stat.size > bytesLimit) continue;
+      out.push({ file: child, size: stat.size });
+    }
+  } catch {
+    return [];
+  } finally {
+    try { dir?.closeSync(); } catch { /* already closed or unreadable */ }
+  }
+
+  return out;
+}
 
 // Non-blocking and no final link on POSIX: a file swapped for a FIFO or link after the check is not
 // waited on or followed; the descriptor is checked again before reading.
