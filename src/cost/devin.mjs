@@ -246,7 +246,9 @@ export function createDevinSpend({ home = guardHome(), root = devinRoot(), notif
 
     appendLog([entry], sessionKey(file), home);
 
-    try { notifier?.('blackbrake · Devin', t('This Devin episode is at {tokens} tokens; your p90 is {p90}.', { tokens: episode.tokens, p90: baseline.p90 })); } catch { /* the log keeps it */ }
+    const body = t('This Codex episode is at {tokens} tokens; your p90 is {p90}.', { tokens: episode.tokens, p90: baseline.p90 }).replaceAll('Codex', 'Devin');
+
+    try { notifier?.('blackbrake · Devin', body); } catch { /* the log keeps it */ }
 
     return entry;
   };
