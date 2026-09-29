@@ -15,6 +15,8 @@ import { tailTranscript } from './live.mjs';
 
 const MIB = 1024 * 1024;
 
+const QUOTAS = { primary: { minutes: 300, threshold: 95, label: '5-hour' }, secondary: { minutes: 10080, threshold: 98, label: 'weekly' } };
+
 const finite = (value) => Number.isFinite(value) && value >= 0;
 
 // A remote CODEX_HOME (\\host\share) is never listed: on Windows that can send NTLM credentials.
@@ -42,10 +44,67 @@ const rateOf = (limits) => {
   for (const k of ['primary', 'secondary']) {
     const w = limits?.[k];
 
-    if (finite(w?.used_percent) && finite(w?.window_minutes)) out[k] = { usedPercent: w.used_percent, windowMinutes: w.window_minutes };
+    if (finite(w?.used_percent) && w.used_percent <= 100 && w?.window_minutes === QUOTAS[k].minutes) out[k] = { usedPercent: w.used_percent, windowMinutes: w.window_minutes };
   }
 
   return Object.keys(out).length ? out : null;
+};
+
+// The private Codex field is a Unix-second reset instant. Missing or malformed identities are
+// deliberately treated as one lifetime bucket; a falling percentage is not proof of a reset.
+const quotaOf = (record) => {
+  if (record?.type !== 'event_msg' || record.payload?.type !== 'token_count') return [];
+  const limits = record.payload.rate_limits;
+  const out = [];
+
+  for (const [name, spec] of Object.entries(QUOTAS)) {
+    const value = limits?.[name];
+
+    if (value?.window_minutes !== spec.minutes || !finite(value?.used_percent) || value.used_percent > 100) continue;
+    const resetAt = value.resets_at;
+
+    out.push({ name, percent: value.used_percent, resetAt: Number.isSafeInteger(resetAt) && resetAt > 0 ? resetAt : null });
+  }
+
+  return out;
+};
+
+const quotaFile = (home) => path.join(home, 'spend', 'codex-quota.json');
+
+const quotaState = (home) => {
+  let raw = null;
+
+  try {
+    const file = quotaFile(home);
+    const stat = fs.lstatSync(file);
+
+    if (stat.isFile() && stat.nlink === 1 && stat.size <= 4096) raw = JSON.parse(fs.readFileSync(file, 'utf8'));
+  } catch { /* missing or malformed state */ }
+
+  return Object.fromEntries(Object.keys(QUOTAS).map((name) => {
+    const value = raw?.[name];
+    const reset = (n) => Number.isSafeInteger(n) && n > 0 ? n : null;
+
+    return [name, { maxResetAt: reset(value?.maxResetAt), alertedResetAt: reset(value?.alertedResetAt), unknownAlerted: value?.unknownAlerted === true }];
+  }));
+};
+
+const observeQuota = (seen, sample) => {
+  const key = sample.resetAt === null ? `${sample.name}:unknown` : sample.name;
+  const prior = seen[key];
+
+  if (sample.resetAt !== null) {
+    if (prior?.resetAt !== null && prior?.resetAt !== undefined && sample.resetAt < prior.resetAt) return { prior: null, stale: true };
+    const previous = prior?.resetAt === sample.resetAt ? prior.percent : 0;
+    seen[key] = { resetAt: sample.resetAt, percent: Math.max(previous, sample.percent) };
+
+    return { prior: previous, stale: false };
+  }
+
+  const previous = prior?.percent ?? seen[sample.name]?.percent ?? 0;
+  seen[key] = { resetAt: null, percent: Math.max(previous, sample.percent) };
+
+  return { prior: previous, stale: false };
 };
 
 // state: { total, cached, open, rate }. total null means the running total is not known yet (a file
@@ -146,6 +205,7 @@ function scanHistory(root) {
   const files = new Map();
   const tokens = [];
   let rate = null;
+  const quotaSeen = {};
 
   for (const file of listCodexSessions(root)) {
     const state = freshCodexState();
@@ -154,6 +214,8 @@ function scanHistory(root) {
     try {
       tail = readToEnd(file, root, (record) => {
         const closed = stepCodex(state, record);
+
+        for (const sample of quotaOf(record)) observeQuota(quotaSeen, sample);
 
         if (closed) tokens.push(closed.tokens);
       });
@@ -164,7 +226,7 @@ function scanHistory(root) {
     files.set(file, { tail, state: { total: state.total, cached: state.cached, open: null, rate: state.rate } });
   }
 
-  return { files, tokens, rate };
+  return { files, tokens, rate, quotaSeen };
 }
 
 export function summarizeCodexHistory({ root = codexRoot() } = {}) {
@@ -192,6 +254,58 @@ export function createCodexSpend({ home = guardHome(), root = codexRoot(), notif
   let baseline = baselineOf(tokens);
   let rate = history.rate;
   let saved = '';
+  const quotaSeen = history.quotaSeen;
+  const quota = quotaState(home);
+  let quotaSaved = JSON.stringify(quota);
+
+  const saveQuota = () => {
+    const next = JSON.stringify(quota);
+
+    if (next === quotaSaved) return;
+    writePrivate(quotaFile(home), `${next}\n`);
+    quotaSaved = next;
+  };
+
+  const checkQuota = (record, live, alerts) => {
+    for (const sample of quotaOf(record)) {
+      const spec = QUOTAS[sample.name];
+      const state = quota[sample.name];
+
+      // An older transcript or a duplicated sample must never reopen an already observed window.
+      if (sample.resetAt !== null && state.maxResetAt !== null && sample.resetAt < state.maxResetAt) continue;
+      const { prior: before, stale } = observeQuota(quotaSeen, sample);
+
+      if (stale) continue;
+
+      if (sample.resetAt !== null && (state.maxResetAt === null || sample.resetAt > state.maxResetAt)) state.maxResetAt = sample.resetAt;
+
+      if (!live || before >= spec.threshold || sample.percent < spec.threshold) continue;
+
+      if (sample.resetAt === null ? state.unknownAlerted : state.alertedResetAt === sample.resetAt) continue;
+
+      // A previously alerted identity-free sample may have belonged to the first later identified
+      // window. Suppress that ambiguous duplicate; the next distinct reset remains eligible.
+      if (sample.resetAt !== null && state.unknownAlerted && state.alertedResetAt === null) {
+        state.alertedResetAt = sample.resetAt;
+        continue;
+      }
+
+      // A persisted marker is written before either visible output. A crash after it can lose one
+      // advisory note, but cannot repeatedly notify on every restart.
+      if (sample.resetAt === null) state.unknownAlerted = true;
+      else state.alertedResetAt = sample.resetAt;
+
+      saveQuota();
+
+      const entry = { ev: 'Codex', kind: 'spend-quota', action: 'warned', harness: 'codex', windowMinutes: spec.minutes, threshold: spec.threshold, usedPercent: sample.percent };
+
+      appendLog([entry], 'codex:quota', home);
+
+      try { notifier?.('blackbrake · Codex', t('Codex {window} usage reached {percent}% (alert at {threshold}%). Check your remaining quota.', { window: t(spec.label), percent: sample.percent, threshold: spec.threshold })); } catch { /* the log keeps it */ }
+
+      alerts.push(entry);
+    }
+  };
 
   const save = () => {
     const text = `${JSON.stringify({ baseline, rate })}\n`;
@@ -238,6 +352,7 @@ export function createCodexSpend({ home = guardHome(), root = codexRoot(), notif
         const { state } = known;
 
         for (const record of read.records) {
+          checkQuota(record, !state.catchUp, alerts);
           const closed = stepCodex(state, record, { prompts: !state.catchUp });
 
           if (closed) {
@@ -256,6 +371,7 @@ export function createCodexSpend({ home = guardHome(), root = codexRoot(), notif
       }
 
       save();
+      saveQuota();
 
       return alerts;
     },

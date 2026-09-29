@@ -69,6 +69,7 @@ export function severity(e) {
     case 'prompt-injection': return 'medium';
     case 'spend-cost':
     case 'spend-tokens':
+    case 'spend-quota':
     case 'spend-loop':
     case 'inventory-delta': return 'low';
     case 'sensitive-read':
@@ -105,6 +106,7 @@ const KIND_TEXT = {
   'spend-cost': 'episode above your local cost p90',
   'spend-loop': 'repeated tool call',
   'spend-tokens': 'episode above your local token p90',
+  'spend-quota': 'Codex quota threshold reached',
   'inventory-delta': 'new or changed agent add-ons',
 };
 

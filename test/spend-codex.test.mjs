@@ -32,6 +32,17 @@ const count = (total, cached = 0) => ({
   },
 });
 
+const quotaCount = (primary, secondary, primaryReset = 1000, secondaryReset = 2000) => {
+  const record = count(0);
+
+  record.payload.rate_limits = {
+    primary: { used_percent: primary, window_minutes: 300, resets_at: primaryReset },
+    secondary: { used_percent: secondary, window_minutes: 10080, resets_at: secondaryReset },
+  };
+
+  return record;
+};
+
 const injected = () => [meta(), text('developer', '<permissions instructions>fixture</permissions instructions>'), text('user', '# AGENTS.md instructions for fixture\n\nfixture'), text('user', '<environment_context>fixture</environment_context>')];
 
 const jsonl = (records) => records.map((r) => JSON.stringify(r)).join('\n') + '\n';
@@ -56,17 +67,27 @@ const watch = (home, steps) => {
 
   const code = `
     import fs from 'node:fs';
+    import http from 'node:http';
+    import https from 'node:https';
+    import net from 'node:net';
+    let networkCalls = 0;
+    const forbidden = () => { networkCalls++; throw new Error('network call'); };
+    globalThis.fetch = forbidden;
+    http.request = forbidden;
+    https.request = forbidden;
+    net.connect = forbidden;
     const { createCodexSpend } = await import(${JSON.stringify(url)});
     const plan = JSON.parse(fs.readFileSync(0, 'utf8'));
     const notes = [];
     const spend = createCodexSpend({ home: process.env.BLACKBRAKE_HOME, notifier: (title, body) => notes.push({ title, body }) });
     const ticks = [];
     for (const step of plan) {
+      if (step.rename) fs.renameSync(step.rename, step.to);
       if (step.append) fs.appendFileSync(step.append, step.text);
       if (step.write) fs.writeFileSync(step.write, step.text);
       if (step.tick) ticks.push(spend.tick().length);
     }
-    process.stdout.write(JSON.stringify({ notes, ticks }));
+    process.stdout.write(JSON.stringify({ notes, ticks, networkCalls }));
   `;
 
   const env = { ...process.env, HOME: home, USERPROFILE: home, BLACKBRAKE_HOME: path.join(home, '.bb'), BLACKBRAKE_NO_WINDOW: '1', BLACKBRAKE_LANG: 'en' };
@@ -267,4 +288,147 @@ test('codex-root-ignores-remote-codex-home', () => {
   assert.equal(codexRoot({ CODEX_HOME: '//attacker.invalid/share/codex' }), local);
   assert.equal(codexRoot({ CODEX_HOME: 'relative/codex' }), local);
   assert.equal(codexRoot({ CODEX_HOME: path.join(os.tmpdir(), 'codex-home') }), path.join(os.tmpdir(), 'codex-home', 'sessions'));
+});
+
+test('codex quota alerts at equality, once per independent window, across files and restart', () => {
+  const home = tempHome('quota');
+  fs.mkdirSync(sessions(home), { recursive: true });
+  const first = path.join(sessions(home), 'rollout-one.jsonl');
+  const second = path.join(sessions(home), 'rollout-two.jsonl');
+
+  fs.writeFileSync(first, jsonl([quotaCount(94.9, 97.9)]));
+
+  const run = watch(home, [
+    { append: first, text: jsonl([quotaCount(95, 97.9)]) }, { tick: true },
+    { write: second, text: jsonl([quotaCount(95, 98)]) }, { tick: true },
+    { append: first, text: jsonl([quotaCount(99, 99)]) }, { tick: true },
+  ]);
+
+  assert.deepEqual(run.ticks, [1, 1, 0]);
+  assert.equal(run.notes.length, 2);
+  assert.equal(run.networkCalls, 0);
+  assert.match(run.notes[0].body, /5-hour usage reached 95%/);
+  assert.match(run.notes[1].body, /weekly usage reached 98%/);
+  assert.doesNotMatch(JSON.stringify(run.notes), /bill|sav/i);
+
+  const restart = watch(home, [{ append: second, text: jsonl([quotaCount(100, 100)]) }, { tick: true }]);
+
+  assert.deepEqual(restart.ticks, [0]);
+  assert.equal(restart.notes.length, 0);
+  assert.equal(restart.networkCalls, 0);
+
+  const state = JSON.parse(fs.readFileSync(path.join(home, '.bb', 'spend', 'codex-quota.json'), 'utf8'));
+
+  assert.equal(state.primary.alertedResetAt, 1000);
+  assert.equal(state.secondary.alertedResetAt, 2000);
+});
+
+test('codex quota new reset can warn again; stale replicated windows cannot', () => {
+  const home = tempHome('reset');
+  fs.mkdirSync(sessions(home), { recursive: true });
+  const file = path.join(sessions(home), 'rollout-reset.jsonl');
+
+  fs.writeFileSync(file, jsonl([quotaCount(94, 97)]));
+  assert.deepEqual(watch(home, [{ append: file, text: jsonl([quotaCount(96, 99)]) }, { tick: true }]).ticks, [2]);
+
+  const r = watch(home, [
+    { append: file, text: jsonl([quotaCount(95, 98, 3000, 4000)]) }, { tick: true },
+    { append: file, text: jsonl([quotaCount(99, 99, 1000, 2000)]) }, { tick: true },
+  ]);
+
+  assert.deepEqual(r.ticks, [2, 0]);
+});
+
+test('codex quota ignores malformed values and wrong windows', () => {
+  const home = tempHome('badquota');
+  fs.mkdirSync(sessions(home), { recursive: true });
+
+  const file = path.join(sessions(home), 'rollout-bad.jsonl');
+  fs.writeFileSync(file, jsonl([quotaCount(20, 20)]));
+
+  const invalid = [
+    { used_percent: 99, window_minutes: 301, resets_at: 1000 },
+    { used_percent: null, window_minutes: 300, resets_at: 1000 },
+    { used_percent: -1, window_minutes: 300, resets_at: 1000 },
+    { used_percent: 101, window_minutes: 300, resets_at: 1000 },
+    { used_percent: '95', window_minutes: 300, resets_at: 1000 },
+    { used_percent: 99, window_minutes: NaN, resets_at: 1000 },
+  ];
+
+  const records = invalid.map((primary) => ({ ...count(0), payload: { ...count(0).payload, rate_limits: { primary } } }));
+  const r = watch(home, [{ append: file, text: jsonl(records) }, { tick: true }]);
+
+  assert.deepEqual(r.ticks, [0]);
+  assert.equal(r.notes.length, 0);
+});
+
+test('codex quota without reset identity warns at most once ever, including after restart', () => {
+  const home = tempHome('unknownquota');
+  fs.mkdirSync(sessions(home), { recursive: true });
+
+  const file = path.join(sessions(home), 'rollout-unknown.jsonl');
+  fs.writeFileSync(file, jsonl([quotaCount(94, 0, null, null)]));
+
+  const first = watch(home, [
+    { append: file, text: jsonl([quotaCount(95, 0, null, null)]) }, { tick: true },
+    { append: file, text: jsonl([quotaCount(20, 0, null, null), quotaCount(99, 0, null, null)]) }, { tick: true },
+  ]);
+
+  assert.deepEqual(first.ticks, [1, 0]);
+  assert.deepEqual(watch(home, [{ append: file, text: jsonl([quotaCount(100, 0, null, null)]) }, { tick: true }]).ticks, [0]);
+});
+
+test('codex quota does not repeat an identity-free alert when the reset identity appears', () => {
+  const home = tempHome('unknown-then-known');
+  fs.mkdirSync(sessions(home), { recursive: true });
+
+  const file = path.join(sessions(home), 'rollout-identity.jsonl');
+  fs.writeFileSync(file, jsonl([quotaCount(94, 0, null, null)]));
+
+  const first = watch(home, [
+    { append: file, text: jsonl([quotaCount(95, 0, null, null)]) }, { tick: true },
+    { append: file, text: jsonl([quotaCount(95, 0, 1000, null)]) }, { tick: true },
+    { append: file, text: jsonl([quotaCount(95, 0, 3000, null)]) }, { tick: true },
+  ]);
+
+  assert.deepEqual(first.ticks, [1, 0, 1]);
+  assert.equal(first.notes.length, 2);
+});
+
+test('codex quota does not replay startup history or rotated content', () => {
+  const home = tempHome('quota-rotate');
+  fs.mkdirSync(sessions(home), { recursive: true });
+
+  const file = path.join(sessions(home), 'rollout-rotate.jsonl');
+  fs.writeFileSync(file, jsonl([quotaCount(96, 99)]));
+
+  const first = watch(home, [
+    { append: file, text: jsonl([quotaCount(96, 99)]) }, { tick: true },
+    { write: file, text: jsonl([quotaCount(96, 99)]) }, { tick: true },
+    { append: file, text: jsonl([quotaCount(96, 99)]) }, { tick: true },
+    { rename: file, to: `${file}.old` }, { write: file, text: jsonl([quotaCount(96, 99)]) }, { tick: true },
+    { append: file, text: jsonl([quotaCount(96, 99, 3000, 4000)]) }, { tick: true },
+  ]);
+
+  assert.deepEqual(first.ticks, [0, 0, 0, 0, 2]);
+});
+
+test('codex quota log and state contain no transcript text or private path', () => {
+  const home = tempHome('quota-privacy');
+  fs.mkdirSync(sessions(home), { recursive: true });
+
+  const file = path.join(sessions(home), 'rollout-PRIVATE-FILENAME.jsonl');
+  fs.writeFileSync(file, jsonl([prompt('PRIVATE-PROMPT-TEXT'), quotaCount(94, 0)]));
+  const r = watch(home, [{ append: file, text: jsonl([quotaCount(95, 0)]) }, { tick: true }]);
+
+  assert.deepEqual(r.ticks, [1]);
+
+  const bb = path.join(home, '.bb');
+  const files = [path.join(bb, 'spend', 'codex-quota.json'), ...fs.readdirSync(path.join(bb, 'log')).map((name) => path.join(bb, 'log', name))];
+
+  for (const item of files) {
+    const body = fs.readFileSync(item, 'utf8');
+
+    assert.doesNotMatch(body, /PRIVATE|PROMPT|rollout|sessions|\.codex/i);
+  }
 });
