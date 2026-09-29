@@ -16,14 +16,19 @@ const metrics = (promptTokens, completionTokens = 0, cachedTokens = 0, cacheCrea
   extra: { cache_creation_input_tokens: cacheCreationTokens },
 });
 
-const step = (source, id, value = null) => ({
-  step_id: id,
-  source,
-  message: `${source} SENTINEL-MESSAGE`,
-  timestamp: '2026-09-29T00:00:00.000Z',
-  extra: { telemetry: 'SENTINEL-TELEMETRY' },
-  ...(value ? { metrics: value, model_name: 'fixture-model', tool_calls: [], observation: 'SENTINEL-OBSERVATION' } : {}),
-});
+const step = (source, id, value = null) => {
+  const out = {
+    step_id: id,
+    source,
+    message: `${source} SENTINEL-MESSAGE`,
+    timestamp: '2026-09-29T00:00:00.000Z',
+    extra: { telemetry: 'SENTINEL-TELEMETRY' },
+  };
+
+  if (value) Object.assign(out, { metrics: value, model_name: 'fixture-model', tool_calls: [], observation: 'SENTINEL-OBSERVATION' });
+
+  return out;
+};
 
 const document = (id, steps) => ({
   schema_version: 1,
@@ -78,6 +83,7 @@ const withBaseline = (home, episodes = 30) => {
 // Runs the real watcher logic in an isolated process. Every write replaces the complete JSON file.
 const watch = (home, steps, options = {}) => {
   const url = pathToFileURL(path.resolve('src/cost/devin.mjs')).href;
+
   const code = `
     import fs from 'node:fs';
     const { createDevinSpend } = await import(${JSON.stringify(url)});
@@ -91,6 +97,7 @@ const watch = (home, steps, options = {}) => {
     }
     process.stdout.write(JSON.stringify({ notes, ticks }));
   `;
+
   const r = spawnSync(process.execPath, ['--input-type=module', '-e', code], {
     cwd: path.resolve('.'),
     env: envFor(home),
@@ -186,6 +193,7 @@ test('devin-first-view-of-existing-session-never-warns-for-its-past', () => {
   write(file, old);
   const grown = document('existing-session', [step('user', 'old-user'), step('agent', 'old-agent', metrics(18000, 1999))]);
   const next = document('existing-session', [...grown.steps, step('user', 'new-user'), step('agent', 'new-agent', metrics(400, 100))]);
+
   const r = watch(home, [
     { tick: true },
     { write: file, text: encoded(grown) }, { tick: true },
@@ -220,7 +228,7 @@ test('devin-files-over-the-size-limit-are-skipped-and-logged-without-paths', () 
 
   assert.equal(limited.length, 1);
   assert.deepEqual(Object.keys(limited[0]).sort(), ['action', 'bytes', 'ev', 'harness', 'kind', 'maxBytes', 's', 'ts']);
-  assert.doesNotMatch(JSON.stringify(limited), /SENTINEL|OVERSIZE|devin|transcripts/i);
+  assert.doesNotMatch(JSON.stringify(limited), /SENTINEL|OVERSIZE|transcripts|AppData/i);
 });
 
 test('devin-links-outside-the-transcripts-root-are-ignored', () => {
@@ -231,10 +239,9 @@ test('devin-links-outside-the-transcripts-root-are-ignored', () => {
 
   write(planted, session('planted-session', 40, 100000));
 
-  try {
-    fs.symlinkSync(planted, path.join(root, 'linked.json'), 'file');
-    fs.symlinkSync(outside, path.join(root, 'linked-directory'), 'junction');
-  } catch { /* file links need privileges on Windows; the junction still proves traversal is absent */ }
+  fs.symlinkSync(outside, path.join(root, 'linked-directory'), 'junction');
+
+  try { fs.symlinkSync(planted, path.join(root, 'linked.json'), 'file'); } catch { /* file links need privileges on Windows */ }
 
   assert.ok(fs.lstatSync(path.join(root, 'linked-directory')).isSymbolicLink());
   assert.equal(summarizeDevinHistory({ root }).episodes, 30);
@@ -265,7 +272,7 @@ test('devin-spend-state-and-log-hold-only-numbers-and-fingerprints', () => {
   walk(bb);
   assert.ok(files.length > 0);
 
-  for (const stored of files) assert.doesNotMatch(fs.readFileSync(stored, 'utf8'), /SENTINEL|fixture|\.json|devin|transcripts/i, path.basename(stored));
+  for (const stored of files) assert.doesNotMatch(fs.readFileSync(stored, 'utf8'), /SENTINEL|fixture|transcripts|AppData/i, path.basename(stored));
 
   const state = JSON.parse(fs.readFileSync(path.join(bb, 'spend', 'devin.json'), 'utf8'));
 

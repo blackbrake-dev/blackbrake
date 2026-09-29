@@ -4,7 +4,7 @@
 //   - follows their history and session files as they grow and warns about real secrets in them,
 //   - opens the alerts window when a harness starts, if no window is open,
 //   - notifies high and maximum alerts from any agent when no alerts window is open to do it,
-//   - warns once when a Codex episode goes above the user's own p90 of tokens per episode.
+//   - warns once when a Codex or Devin episode goes above the user's own p90 of tokens per episode.
 // Local only; it writes nothing but guard's own log and pid file.
 import { spawnSync } from 'node:child_process';
 import crypto from 'node:crypto';
@@ -170,8 +170,11 @@ export async function runBackground({ home = guardHome(), intervalMs = 8000, cli
   const reported = new Map();
   // Loaded here, never on the hook's path; without it the rest of the watcher still runs.
   let codex = null;
+  let devin = null;
 
   try { codex = (await import('../cost/codex.mjs')).createCodexSpend({ home, notifier }); } catch { /* Codex spend is optional */ }
+
+  try { devin = (await import('../cost/devin.mjs')).createDevinSpend({ home, notifier }); } catch { /* Devin spend is optional */ }
 
   const tick = () => {
     try { fs.utimesSync(pidFile, new Date(), new Date()); } catch { /* hint only */ }
@@ -214,6 +217,8 @@ export async function runBackground({ home = guardHome(), intervalMs = 8000, cli
     for (const [k, at] of reported) if (Date.now() - at > 864e5) reported.delete(k);
 
     try { codex?.tick(); } catch { /* a Codex spend failure never stops the watcher */ }
+
+    try { devin?.tick(); } catch { /* a Devin spend failure never stops the watcher */ }
 
     // The open alerts window notifies on its own; otherwise this does.
     const fresh = tail.read();
