@@ -220,7 +220,10 @@ test('devin-files-over-the-size-limit-are-skipped-and-logged-without-paths', () 
   const root = withBaseline(home);
   const file = path.join(root, 'SENTINEL-OVERSIZE.json');
   const huge = { ...session('SENTINEL-SESSION', 1, 90000), padding: 'x'.repeat(70 * 1024) };
-  const r = watch(home, [{ write: file, text: encoded(huge) }, { tick: true }, { tick: true }], { maxBytes: 64 * 1024 });
+
+  write(file, huge);
+
+  const r = watch(home, [{ tick: true }, { tick: true }], { maxBytes: 64 * 1024 });
 
   assert.deepEqual(r.ticks, [0, 0]);
   assert.equal(r.notes.length, 0);

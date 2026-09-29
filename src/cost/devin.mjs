@@ -180,7 +180,7 @@ function scanHistory(root, maxBytes) {
     const read = readSession(file, root, stat, maxBytes);
 
     if (read.status !== 'ok') {
-      files.set(file, { signature: read.signature ?? (stat ? signature(stat) : ''), limited: read.status === 'limit' });
+      files.set(file, { signature: read.signature ?? (stat ? signature(stat) : ''), limited: read.status === 'limit', bytes: read.bytes });
       continue;
     }
 
@@ -235,6 +235,8 @@ export function createDevinSpend({ home = guardHome(), root = devinRoot(), notif
   const logLimit = (file, bytes) => {
     appendLog([{ ev: 'Devin', kind: 'spend-limit', action: 'skipped', harness: 'devin', bytes, maxBytes }], sessionKey(file), home);
   };
+
+  for (const [file, state] of files) if (state.limited) logLimit(file, state.bytes);
 
   const warn = (file, episode) => {
     alerted.add(episode.id);
