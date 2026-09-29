@@ -7,6 +7,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { t } from '../i18n.mjs';
+import { isLocalPath } from '../text.mjs';
 import { isHarnessText } from '../transcripts.mjs';
 import { baselineFromEpisodes } from '../guard/spend.mjs';
 import { appendLog, guardHome, writePrivate } from '../guard/state.mjs';
@@ -16,8 +17,9 @@ const MIB = 1024 * 1024;
 
 const finite = (value) => Number.isFinite(value) && value >= 0;
 
+// A remote CODEX_HOME (\\host\share) is never listed: on Windows that can send NTLM credentials.
 export const codexRoot = (env = process.env) => {
-  const home = env.CODEX_HOME && path.isAbsolute(env.CODEX_HOME) ? env.CODEX_HOME : path.join(os.homedir(), '.codex');
+  const home = env.CODEX_HOME && path.isAbsolute(env.CODEX_HOME) && isLocalPath(env.CODEX_HOME) ? env.CODEX_HOME : path.join(os.homedir(), '.codex');
 
   return path.join(home, 'sessions');
 };

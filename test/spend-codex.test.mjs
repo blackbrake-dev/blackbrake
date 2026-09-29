@@ -7,7 +7,7 @@ import path from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { pathToFileURL } from 'node:url';
 import test from 'node:test';
-import { episodesFromRecords, summarizeCodexHistory } from '../src/cost/codex.mjs';
+import { codexRoot, episodesFromRecords, summarizeCodexHistory } from '../src/cost/codex.mjs';
 
 const text = (role, value) => ({ type: 'response_item', payload: { type: 'message', role, content: [{ type: 'input_text', text: value }] } });
 
@@ -256,4 +256,15 @@ test('codex-spend-runs-inside-the-background-watcher', () => {
 
   assert.equal(r.status, 0, r.stderr);
   assert.equal(JSON.parse(fs.readFileSync(path.join(home, '.bb', 'spend', 'codex.json'), 'utf8')).baseline.n, 30);
+});
+
+// A remote CODEX_HOME is never read: listing a UNC share on Windows can send the user's NTLM
+// credentials to that host. The default local folder is used instead.
+test('codex-root-ignores-remote-codex-home', () => {
+  const local = path.join(os.homedir(), '.codex', 'sessions');
+
+  assert.equal(codexRoot({ CODEX_HOME: '\\\\attacker.invalid\\share\\codex' }), local);
+  assert.equal(codexRoot({ CODEX_HOME: '//attacker.invalid/share/codex' }), local);
+  assert.equal(codexRoot({ CODEX_HOME: 'relative/codex' }), local);
+  assert.equal(codexRoot({ CODEX_HOME: path.join(os.tmpdir(), 'codex-home') }), path.join(os.tmpdir(), 'codex-home', 'sessions'));
 });
