@@ -643,6 +643,8 @@ export const ES = {
   'Warning: review whether to continue.': 'Aviso: revisa si quieres continuar.',
   'episode above your local cost p90': 'episodio por encima de tu p90 local de coste',
   'repeated tool call': 'llamada de herramienta repetida',
+  'episode above your local token p90': 'episodio por encima de tu p90 local de tokens',
+  'This Codex episode is at {tokens} tokens; your p90 is {p90}.': 'Este episodio de Codex lleva {tokens} tokens; tu p90 es {p90}.',
   'new or changed agent add-ons': 'complementos del agente nuevos o modificados',
   'Spend': 'Gasto',
   '{n} local episodes · median API≈${median} · p90 API≈${p90}': '{n} episodios locales · mediana API≈${median} · p90 API≈${p90}',

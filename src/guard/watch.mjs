@@ -68,6 +68,7 @@ export function severity(e) {
     case 'secret-in-history': return 'high';
     case 'prompt-injection': return 'medium';
     case 'spend-cost':
+    case 'spend-tokens':
     case 'spend-loop':
     case 'inventory-delta': return 'low';
     case 'sensitive-read':
@@ -103,6 +104,7 @@ const KIND_TEXT = {
   'secret-in-history': 'secret written in an agent\'s history',
   'spend-cost': 'episode above your local cost p90',
   'spend-loop': 'repeated tool call',
+  'spend-tokens': 'episode above your local token p90',
   'inventory-delta': 'new or changed agent add-ons',
 };
 
