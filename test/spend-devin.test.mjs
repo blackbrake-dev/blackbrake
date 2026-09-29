@@ -184,6 +184,27 @@ test('devin-rewrite-recalculates-without-double-counting-and-warns-once', () => 
   assert.equal(JSON.parse(fs.readFileSync(path.join(home, '.bb', 'spend', 'devin.json'), 'utf8')).baseline.n, 31);
 });
 
+test('devin-warns-for-a-high-episode-closed-between-watcher-ticks', () => {
+  const home = tempHome('closed-between-ticks');
+  const root = withBaseline(home);
+  const file = path.join(root, 'live.json');
+  const live = document('live-session', [step('user', 'live-user'), step('agent', 'live-agent', metrics(40, 10))]);
+
+  const completed = document('live-session', [
+    step('user', 'live-user'), step('agent', 'live-agent', metrics(400, 100)),
+    step('user', 'next-user'), step('agent', 'next-agent', metrics(5, 5)),
+  ]);
+
+  const r = watch(home, [
+    { write: file, text: encoded(live) }, { tick: true },
+    { write: file, text: encoded(completed) }, { tick: true },
+  ]);
+
+  assert.deepEqual(r.ticks, [0, 1]);
+  assert.equal(r.notes.length, 1);
+  assert.match(r.notes[0].body, /^This Devin episode is at 500 tokens; your p90 is 100\.$/);
+});
+
 test('devin-first-view-of-existing-session-never-warns-for-its-past', () => {
   const home = tempHome('existing');
   const root = withBaseline(home);

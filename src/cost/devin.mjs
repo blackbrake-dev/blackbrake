@@ -291,6 +291,8 @@ export function createDevinSpend({ home = guardHome(), root = devinRoot(), notif
           if (episode.id === suppressed) continue;
 
           if (episode.closed && !counted.has(episode.id)) {
+            if (known?.openId === episode.id && !alerted.has(episode.id) && baseline.ready && episode.tokens > baseline.p90) alerts.push(warn(file, episode));
+
             counted.set(episode.id, episode.tokens);
             changed = true;
           }
@@ -299,7 +301,7 @@ export function createDevinSpend({ home = guardHome(), root = devinRoot(), notif
         }
 
         if (changed) baseline = baselineOf(counted.values());
-        files.set(file, { signature: read.signature, suppressed, limited: false });
+        files.set(file, { signature: read.signature, suppressed, openId: episodes.findLast((episode) => !episode.closed)?.id ?? null, limited: false });
       }
 
       save();
