@@ -17,7 +17,17 @@ const prompt = (value = 'fixture prompt SENTINEL-PROMPT') => text('user', value)
 
 const toolOut = () => ({ type: 'response_item', payload: { type: 'function_call_output', call_id: 'fixture', output: 'SENTINEL-OUTPUT' } });
 
-const RATE = { primary: { used_percent: 12.5, window_minutes: 300, resets_at: 1 }, secondary: { used_percent: 3, window_minutes: 10080, resets_at: 2 } };
+const FIXTURE_NOW = Math.floor(Date.now() / 1000);
+
+const PRIMARY_RESET = FIXTURE_NOW + 60;
+
+const SECONDARY_RESET = FIXTURE_NOW + 120;
+
+const NEXT_PRIMARY_RESET = FIXTURE_NOW + 180;
+
+const NEXT_SECONDARY_RESET = FIXTURE_NOW + 240;
+
+const RATE = { primary: { used_percent: 12.5, window_minutes: 300, resets_at: PRIMARY_RESET }, secondary: { used_percent: 3, window_minutes: 10080, resets_at: SECONDARY_RESET } };
 
 const count = (total, cached = 0) => ({
   type: 'event_msg',
@@ -32,7 +42,7 @@ const count = (total, cached = 0) => ({
   },
 });
 
-const quotaCount = (primary, secondary, primaryReset = 1000, secondaryReset = 2000) => {
+const quotaCount = (primary, secondary, primaryReset = PRIMARY_RESET, secondaryReset = SECONDARY_RESET) => {
   const record = count(0);
 
   record.payload.rate_limits = {
@@ -319,8 +329,8 @@ test('codex quota alerts at equality, once per independent window, across files 
 
   const state = JSON.parse(fs.readFileSync(path.join(home, '.bb', 'spend', 'codex-quota.json'), 'utf8'));
 
-  assert.equal(state.primary.alertedResetAt, 1000);
-  assert.equal(state.secondary.alertedResetAt, 2000);
+  assert.equal(state.primary.alertedResetAt, PRIMARY_RESET);
+  assert.equal(state.secondary.alertedResetAt, SECONDARY_RESET);
 });
 
 test('codex quota new reset can warn again; stale replicated windows cannot', () => {
@@ -332,8 +342,8 @@ test('codex quota new reset can warn again; stale replicated windows cannot', ()
   assert.deepEqual(watch(home, [{ append: file, text: jsonl([quotaCount(96, 99)]) }, { tick: true }]).ticks, [2]);
 
   const r = watch(home, [
-    { append: file, text: jsonl([quotaCount(95, 98, 3000, 4000)]) }, { tick: true },
-    { append: file, text: jsonl([quotaCount(99, 99, 1000, 2000)]) }, { tick: true },
+    { append: file, text: jsonl([quotaCount(95, 98, NEXT_PRIMARY_RESET, NEXT_SECONDARY_RESET)]) }, { tick: true },
+    { append: file, text: jsonl([quotaCount(99, 99, PRIMARY_RESET, SECONDARY_RESET)]) }, { tick: true },
   ]);
 
   assert.deepEqual(r.ticks, [2, 0]);
@@ -387,8 +397,8 @@ test('codex quota does not repeat an identity-free alert when the reset identity
 
   const first = watch(home, [
     { append: file, text: jsonl([quotaCount(95, 0, null, null)]) }, { tick: true },
-    { append: file, text: jsonl([quotaCount(95, 0, 1000, null)]) }, { tick: true },
-    { append: file, text: jsonl([quotaCount(95, 0, 3000, null)]) }, { tick: true },
+    { append: file, text: jsonl([quotaCount(95, 0, PRIMARY_RESET, null)]) }, { tick: true },
+    { append: file, text: jsonl([quotaCount(95, 0, NEXT_PRIMARY_RESET, null)]) }, { tick: true },
   ]);
 
   assert.deepEqual(first.ticks, [1, 0, 1]);
@@ -407,7 +417,7 @@ test('codex quota does not replay startup history or rotated content', () => {
     { write: file, text: jsonl([quotaCount(96, 99)]) }, { tick: true },
     { append: file, text: jsonl([quotaCount(96, 99)]) }, { tick: true },
     { rename: file, to: `${file}.old` }, { write: file, text: jsonl([quotaCount(96, 99)]) }, { tick: true },
-    { append: file, text: jsonl([quotaCount(96, 99, 3000, 4000)]) }, { tick: true },
+    { append: file, text: jsonl([quotaCount(96, 99, NEXT_PRIMARY_RESET, NEXT_SECONDARY_RESET)]) }, { tick: true },
   ]);
 
   assert.deepEqual(first.ticks, [0, 0, 0, 0, 2]);
@@ -431,4 +441,101 @@ test('codex quota log and state contain no transcript text or private path', () 
 
     assert.doesNotMatch(body, /PRIVATE|PROMPT|rollout|sessions|\.codex/i);
   }
+});
+
+test('codex quota rejects an impossible transcript reset without poisoning later windows', () => {
+  const home = tempHome('future-transcript');
+  fs.mkdirSync(sessions(home), { recursive: true });
+
+  const now = Math.floor(Date.now() / 1000);
+  const file = path.join(sessions(home), 'rollout-future.jsonl');
+  fs.writeFileSync(file, jsonl([quotaCount(94, 0, now + 300 * 60, null)]));
+
+  const r = watch(home, [
+    { append: file, text: jsonl([quotaCount(95, 0, now + 365 * 86400, null)]) }, { tick: true },
+    { append: file, text: jsonl([quotaCount(95, 0, now + 300 * 60, null)]) }, { tick: true },
+  ]);
+
+  const state = JSON.parse(fs.readFileSync(path.join(home, '.bb', 'spend', 'codex-quota.json'), 'utf8'));
+
+  assert.ok(state.primary.maxResetAt === null || state.primary.maxResetAt <= now + 300 * 60 + 900);
+  assert.equal(r.notes.length, 1);
+});
+
+test('codex quota ignores impossible persisted reset and warns in a valid window', () => {
+  const home = tempHome('future-state');
+  fs.mkdirSync(sessions(home), { recursive: true });
+
+  const now = Math.floor(Date.now() / 1000);
+  const valid = now + 300 * 60;
+  const file = path.join(sessions(home), 'rollout-valid.jsonl');
+  const spend = path.join(home, '.bb', 'spend');
+
+  fs.writeFileSync(file, jsonl([quotaCount(94, 0, valid, null)]));
+  fs.mkdirSync(spend, { recursive: true });
+  fs.writeFileSync(path.join(spend, 'codex-quota.json'), JSON.stringify({ primary: { maxResetAt: now + 365 * 86400, alertedResetAt: now + 365 * 86400 } }));
+  const r = watch(home, [{ append: file, text: jsonl([quotaCount(95, 0, valid, null)]) }, { tick: true }]);
+
+  assert.deepEqual(r.ticks, [1]);
+});
+
+test('codex quota reset allows bounded clock skew but rejects a larger offset', () => {
+  const now = Math.floor(Date.now() / 1000);
+  const near = tempHome('reset-near');
+  const far = tempHome('reset-far');
+  fs.mkdirSync(sessions(near), { recursive: true });
+  fs.mkdirSync(sessions(far), { recursive: true });
+
+  const nearFile = path.join(sessions(near), 'rollout-near.jsonl');
+  const farFile = path.join(sessions(far), 'rollout-far.jsonl');
+  const nearReset = now + 300 * 60 + 14 * 60;
+  const farReset = now + 300 * 60 + 16 * 60;
+
+  fs.writeFileSync(nearFile, jsonl([quotaCount(94, 0, nearReset, null)]));
+  fs.writeFileSync(farFile, jsonl([quotaCount(94, 0, farReset, null)]));
+  assert.deepEqual(watch(near, [{ append: nearFile, text: jsonl([quotaCount(95, 0, nearReset, null)]) }, { tick: true }]).ticks, [1]);
+  assert.deepEqual(watch(far, [{ append: farFile, text: jsonl([quotaCount(95, 0, farReset, null)]) }, { tick: true }]).ticks, [1]);
+
+  const nearState = JSON.parse(fs.readFileSync(path.join(near, '.bb', 'spend', 'codex-quota.json'), 'utf8'));
+  const farState = JSON.parse(fs.readFileSync(path.join(far, '.bb', 'spend', 'codex-quota.json'), 'utf8'));
+
+  assert.equal(nearState.primary.maxResetAt, nearReset);
+  assert.equal(farState.primary.maxResetAt, null);
+  assert.equal(farState.primary.unknownAlerted, true);
+});
+
+test('codex quota state reader does not stat through a linked spend ancestor', (t) => {
+  const home = tempHome('linked-state');
+  const outside = tempHome('linked-outside');
+  const spend = path.join(home, '.bb', 'spend');
+
+  fs.mkdirSync(path.dirname(spend), { recursive: true });
+  fs.writeFileSync(path.join(outside, 'codex-quota.json'), JSON.stringify({ primary: { maxResetAt: 9999999999 } }));
+
+  try { fs.symlinkSync(outside, spend, process.platform === 'win32' ? 'junction' : 'dir'); } catch {
+    t.skip('directory links are unavailable on this host');
+
+    return;
+  }
+
+  const url = pathToFileURL(path.resolve('src/cost/codex.mjs')).href;
+
+  const code = `
+    import fs from 'node:fs';
+    const original = fs.lstatSync;
+    let reachedState = 0;
+    fs.lstatSync = function(file, ...args) {
+      if (String(file).endsWith('codex-quota.json')) reachedState++;
+      return original.call(this, file, ...args);
+    };
+    const { createCodexSpend } = await import(${JSON.stringify(url)});
+    try { createCodexSpend({ home: process.env.BLACKBRAKE_HOME, root: process.env.CODEX_HOME, notifier: () => {} }); } catch {}
+    process.stdout.write(JSON.stringify({ reachedState }));
+  `;
+
+  const env = { ...process.env, HOME: home, USERPROFILE: home, CODEX_HOME: path.join(home, '.codex', 'sessions'), BLACKBRAKE_HOME: path.join(home, '.bb'), BLACKBRAKE_NO_WINDOW: '1' };
+  const r = spawnSync(process.execPath, ['--input-type=module', '-e', code], { env, encoding: 'utf8' });
+
+  assert.equal(r.status, 0, r.stderr);
+  assert.equal(JSON.parse(r.stdout).reachedState, 0);
 });

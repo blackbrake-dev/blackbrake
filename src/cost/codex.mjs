@@ -17,7 +17,13 @@ const MIB = 1024 * 1024;
 
 const QUOTAS = { primary: { minutes: 300, threshold: 95, label: '5-hour' }, secondary: { minutes: 10080, threshold: 98, label: 'weekly' } };
 
+const RESET_SKEW_SECONDS = 15 * 60;
+
 const finite = (value) => Number.isFinite(value) && value >= 0;
+
+const plausibleReset = (value, minutes, now = Math.floor(Date.now() / 1000)) => Number.isSafeInteger(value)
+  && value >= now - minutes * 60 - RESET_SKEW_SECONDS
+  && value <= now + minutes * 60 + RESET_SKEW_SECONDS;
 
 // A remote CODEX_HOME (\\host\share) is never listed: on Windows that can send NTLM credentials.
 export const codexRoot = (env = process.env) => {
@@ -63,7 +69,7 @@ const quotaOf = (record) => {
     if (value?.window_minutes !== spec.minutes || !finite(value?.used_percent) || value.used_percent > 100) continue;
     const resetAt = value.resets_at;
 
-    out.push({ name, percent: value.used_percent, resetAt: Number.isSafeInteger(resetAt) && resetAt > 0 ? resetAt : null });
+    out.push({ name, percent: value.used_percent, resetAt: plausibleReset(resetAt, spec.minutes) ? resetAt : null });
   }
 
   return out;
@@ -71,19 +77,58 @@ const quotaOf = (record) => {
 
 const quotaFile = (home) => path.join(home, 'spend', 'codex-quota.json');
 
+// Match writePrivate's ancestor policy before even looking at the state file. lstat on the final
+// path alone would traverse a planted spend junction (and could touch a remote share on Windows).
+const safeQuotaParent = (file) => {
+  if (!path.isAbsolute(file) || !isLocalPath(file)) return false;
+  const parent = path.resolve(path.dirname(file));
+  const root = path.parse(parent).root;
+  let current = root;
+
+  for (const part of path.relative(root, parent).split(path.sep).filter(Boolean)) {
+    current = path.join(current, part);
+    let stat;
+
+    try { stat = fs.lstatSync(current); } catch { return false; }
+
+    if (stat.isSymbolicLink()) {
+      if (process.platform === 'win32' || stat.uid !== 0 || path.dirname(current) !== root) return false;
+    } else if (!stat.isDirectory()) return false;
+  }
+
+  return true;
+};
+
 const quotaState = (home) => {
   let raw = null;
 
   try {
     const file = quotaFile(home);
-    const stat = fs.lstatSync(file);
 
-    if (stat.isFile() && stat.nlink === 1 && stat.size <= 4096) raw = JSON.parse(fs.readFileSync(file, 'utf8'));
+    if (safeQuotaParent(file)) {
+      const before = fs.lstatSync(file);
+
+      if (before.isFile() && before.nlink === 1 && before.size <= 4096) {
+        const flags = fs.constants.O_RDONLY | (fs.constants.O_NOFOLLOW ?? 0) | (fs.constants.O_NONBLOCK ?? 0);
+        const fd = fs.openSync(file, flags);
+
+        try {
+          const opened = fs.fstatSync(fd);
+
+          if (opened.isFile() && opened.nlink === 1 && opened.size <= 4096) {
+            const bytes = Buffer.alloc(opened.size);
+
+            fs.readSync(fd, bytes, 0, bytes.length, 0);
+            raw = JSON.parse(bytes.toString('utf8'));
+          }
+        } finally { fs.closeSync(fd); }
+      }
+    }
   } catch { /* missing or malformed state */ }
 
-  return Object.fromEntries(Object.keys(QUOTAS).map((name) => {
+  return Object.fromEntries(Object.entries(QUOTAS).map(([name, spec]) => {
     const value = raw?.[name];
-    const reset = (n) => Number.isSafeInteger(n) && n > 0 ? n : null;
+    const reset = (n) => plausibleReset(n, spec.minutes) ? n : null;
 
     return [name, { maxResetAt: reset(value?.maxResetAt), alertedResetAt: reset(value?.alertedResetAt), unknownAlerted: value?.unknownAlerted === true }];
   }));
