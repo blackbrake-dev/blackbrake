@@ -6,8 +6,9 @@ import os from 'node:os';
 import path from 'node:path';
 import { spawnSync } from 'node:child_process';
 import test from 'node:test';
-import { listClaudeSubagentFiles } from '../src/cost/live.mjs';
+import * as liveCost from '../src/cost/live.mjs';
 import { usageCost } from '../src/cost/prices.mjs';
+import { accountClaudeSubagents } from '../src/guard/spend-hook.mjs';
 import { setSpendBaseline } from '../src/guard/spend-state.mjs';
 import { getSession } from '../src/guard/state.mjs';
 
@@ -75,6 +76,8 @@ const hook = ({ claude, home }) => (event, input) => {
 };
 
 const event = (transcript, extra = {}) => ({ session_id: SESSION, transcript_path: transcript, ...extra });
+
+const listClaudeSubagentFiles = liveCost.listClaudeSubagentFiles;
 
 test('Claude live spend attributes a new matching subagent to the open parent episode', () => {
   const f = fixture('attribute');
@@ -218,4 +221,157 @@ test('subagent enumeration rejects foreign paths, links, malformed entries and b
   fs.rmSync(path.join(linkedSession.project, SESSION), { recursive: true });
   fs.symlinkSync(outsideSession, path.join(linkedSession.project, SESSION), process.platform === 'win32' ? 'junction' : 'dir');
   assert.deepEqual(listClaudeSubagentFiles(linkedSession.transcript, SESSION, { roots: [linkedSession.root] }), []);
+});
+
+test('opening a listed child revalidates session and subagents under the projects root', () => {
+  for (const swapped of ['session', 'subagents']) {
+    const f = fixture(`race-${swapped}`);
+    const name = 'agent-aabbccddaabbccdd.jsonl';
+    const safeFile = path.join(f.children, name);
+    const outside = fs.mkdtempSync(path.join(os.tmpdir(), `blackbrake-subagents-race-${swapped}-`));
+    const outsideChildren = swapped === 'session' ? path.join(outside, 'subagents') : outside;
+    const started = Date.now() - 1000;
+
+    fs.writeFileSync(safeFile, '{}\n');
+    fs.mkdirSync(outsideChildren, { recursive: true });
+    fs.writeFileSync(path.join(outsideChildren, name), jsonl(child(`outside-${swapped}`, SESSION, new Date(started + 100).toISOString())));
+
+    let replaced = false;
+
+    const live = {
+      ...liveCost,
+      listClaudeSubagentFiles(...args) {
+        const listed = listClaudeSubagentFiles(...args);
+
+        if (swapped === 'session') {
+          const sessionRoot = path.dirname(f.children);
+
+          fs.rmSync(sessionRoot, { recursive: true });
+          fs.symlinkSync(outside, sessionRoot, process.platform === 'win32' ? 'junction' : 'dir');
+        } else {
+          fs.rmSync(f.children, { recursive: true });
+          fs.symlinkSync(outsideChildren, f.children, process.platform === 'win32' ? 'junction' : 'dir');
+        }
+
+        replaced = true;
+
+        return listed;
+      },
+    };
+
+    const spend = {
+      open: { start: started, cost: 0, responses: 0, tokens: 0, costAlerted: false },
+      responses: [],
+      subagents: { initialized: true, files: {} },
+    };
+
+    accountClaudeSubagents({ live, transcript: f.transcript, root: f.root, sessionId: SESSION, spend, secret: 'fixture-secret' });
+
+    assert.equal(replaced, true);
+    assert.equal(spend.open.cost, 0, `${swapped} replacement escaped the projects root`);
+    assert.equal(spend.open.responses, 0, `${swapped} replacement was accounted`);
+  }
+});
+
+test('unchanged children stay closed while rewrite, truncate and rotation remain deduplicated', () => {
+  const f = fixture('metadata');
+  const name = 'agent-aabbccddaabbccdd.jsonl';
+  const file = path.join(f.children, name);
+  const started = Date.now() - 1000;
+  const at = (delta) => new Date(started + delta).toISOString();
+  const rows = child('first', SESSION, at(100));
+
+  fs.writeFileSync(file, jsonl(rows));
+
+  let opens = 0;
+
+  const live = {
+    ...liveCost,
+    tailTranscript(...args) {
+      opens++;
+
+      return liveCost.tailTranscript(...args);
+    },
+  };
+
+  const spend = {
+    open: { start: started, cost: 0, responses: 0, tokens: 0, costAlerted: false },
+    responses: [],
+    subagents: { initialized: true, files: {} },
+  };
+
+  const account = () => accountClaudeSubagents({ live, transcript: f.transcript, root: f.root, sessionId: SESSION, spend, secret: 'fixture-secret' });
+
+  account();
+  assert.equal(opens, 1);
+  const first = { cost: spend.open.cost, responses: spend.open.responses };
+
+  account();
+  assert.equal(opens, 1, 'an unchanged child was reopened');
+
+  rows.push(usage('second', SESSION, at(200)));
+  fs.appendFileSync(file, jsonl([rows.at(-1)]));
+  account();
+  assert.equal(opens, 2, 'an appended child was not reopened');
+  assert.equal(spend.open.responses, first.responses + 1);
+  const counted = { cost: spend.open.cost, responses: spend.open.responses };
+
+  fs.writeFileSync(file, jsonl(rows));
+  const future = new Date(Date.now() + 5000);
+
+  fs.utimesSync(file, future, future);
+  account();
+  assert.equal(opens, 3, 'a same-size rewrite was not reopened');
+  assert.deepEqual({ cost: spend.open.cost, responses: spend.open.responses }, counted);
+
+  fs.writeFileSync(file, '');
+  account();
+  assert.equal(opens, 4, 'a truncation was not reopened');
+  fs.writeFileSync(file, jsonl(rows));
+  account();
+  assert.equal(opens, 5, 'a rewritten truncated child was not reopened');
+
+  const replacement = path.join(f.children, 'replacement.jsonl');
+
+  fs.writeFileSync(replacement, jsonl(rows));
+  fs.rmSync(file);
+  fs.renameSync(replacement, file);
+  account();
+  assert.equal(opens, 6, 'a rotated child was not reopened');
+  assert.deepEqual({ cost: spend.open.cost, responses: spend.open.responses }, counted);
+});
+
+test('unchanged metadata does not skip the unread remainder of a bounded child tail', () => {
+  const f = fixture('bounded-tail');
+  const file = path.join(f.children, 'agent-aabbccddaabbccdd.jsonl');
+  const started = Date.now() - 1000;
+
+  fs.writeFileSync(file, `${'x'.repeat(300 * 1024)}\n${jsonl(child('after-large-line', SESSION, new Date(started + 100).toISOString()))}`);
+
+  let opens = 0;
+
+  const live = {
+    ...liveCost,
+    tailTranscript(...args) {
+      opens++;
+
+      return liveCost.tailTranscript(...args);
+    },
+  };
+
+  const spend = {
+    open: { start: started, cost: 0, responses: 0, tokens: 0, costAlerted: false },
+    responses: [],
+    subagents: { initialized: true, files: {} },
+  };
+
+  const account = () => accountClaudeSubagents({ live, transcript: f.transcript, root: f.root, sessionId: SESSION, spend, secret: 'fixture-secret' });
+
+  account();
+  assert.equal(spend.open.responses, 0);
+  account();
+  assert.equal(spend.open.responses, 1);
+  assert.equal(opens, 2);
+  account();
+  assert.equal(opens, 2, 'a fully consumed unchanged child was reopened');
 });

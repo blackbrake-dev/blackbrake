@@ -19,9 +19,15 @@ const safeTail = (tail) => {
   const offset = Number.isInteger(tail.offset) && tail.offset >= 0 ? tail.offset : 0;
   const size = Number.isInteger(tail.size) && tail.size >= 0 ? tail.size : 0;
   const identity = /^[a-f0-9]{16}$/.test(tail.identity ?? '') ? tail.identity : undefined;
+  const modified = Number.isFinite(tail.modified) && tail.modified >= 0 ? tail.modified : undefined;
+  const changed = Number.isFinite(tail.changed) && tail.changed >= 0 ? tail.changed : undefined;
   const safe = { offset, size };
 
   if (identity) safe.identity = identity;
+
+  if (modified !== undefined) safe.modified = modified;
+
+  if (changed !== undefined) safe.changed = changed;
 
   if (tail.skip === true) safe.skip = true;
 
@@ -70,7 +76,7 @@ const safeChildState = (stored, silent = false) => {
 // Follow only children of the validated parent session. The first enumeration is a silent snapshot:
 // it cannot turn spend from an already-running episode into a historical alert. Later files are new
 // subagents and are assigned by their first timestamp to the parent episode open at that moment.
-function accountClaudeSubagents({ live, transcript, root, sessionId, spend, secret }) {
+export function accountClaudeSubagents({ live, transcript, root, sessionId, spend, secret }) {
   let listed;
 
   try { listed = live.listClaudeSubagentFiles(transcript, sessionId, { roots: [root] }); } catch { return false; }
@@ -105,11 +111,20 @@ function accountClaudeSubagents({ live, transcript, root, sessionId, spend, secr
     }
 
     const seed = state.silent;
+
+    if (!seed && state.tail.offset >= child.size && state.tail.skip !== true
+      && state.tail.identity === child.identity && state.tail.size === child.size
+      && state.tail.modified === child.modified && state.tail.changed === child.changed) {
+      files[key] = state;
+
+      continue;
+    }
+
     const maxBytes = Math.min(seed ? 64 * 1024 : 256 * 1024, budget);
     let tailed;
 
     try {
-      tailed = live.tailTranscript(child.file, { roots: [path.dirname(path.dirname(child.file))], state: state.tail, maxBytes, fromEnd: seed });
+      tailed = live.tailTranscript(child.file, { roots: [root], state: state.tail, maxBytes, fromEnd: seed });
     } catch {
       files[key] = { ...state, rejected: true };
       changed = true;

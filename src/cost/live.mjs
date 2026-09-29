@@ -104,7 +104,7 @@ export function listClaudeSubagentFiles(file, sessionId, {
       try { stat = fs.lstatSync(child); } catch { continue; }
 
       if (!stat.isFile() || stat.isSymbolicLink() || stat.nlink > 1 || stat.size > bytesLimit) continue;
-      out.push({ file: child, size: stat.size });
+      out.push({ file: child, size: stat.size, identity: identityOf(stat), modified: stat.mtimeMs, changed: stat.ctimeMs });
     }
   } catch {
     return [];
@@ -131,7 +131,12 @@ export function tailTranscript(file, { roots = [], state = {}, maxBytes = 1024 *
     stat = fs.fstatSync(fd);
 
     if (!stat.isFile()) throw new Error('Transcript is not a regular file');
-    const reset = (state.identity && state.identity !== identityOf(stat)) || stat.size < (state.offset ?? 0);
+    const identity = identityOf(stat);
+
+    const rewritten = state.identity === identity && state.size === stat.size
+      && ((Number.isFinite(state.modified) && state.modified !== stat.mtimeMs) || (Number.isFinite(state.changed) && state.changed !== stat.ctimeMs));
+
+    const reset = (state.identity && state.identity !== identity) || stat.size < (state.offset ?? 0) || rewritten;
 
     const start = fromEnd && !state.identity ? Math.max(0, stat.size - maxBytes) : null;
 
@@ -142,6 +147,7 @@ export function tailTranscript(file, { roots = [], state = {}, maxBytes = 1024 *
   } finally { fs.closeSync(fd); }
 
   const identity = identityOf(stat);
+  const metadata = { size: stat.size, identity, modified: stat.mtimeMs, changed: stat.ctimeMs };
   // A line longer than one read would stall the tail for the rest of the session: it is skipped up
   // to its newline, never buffered (in practice a large pasted image or tool result, not usage).
   let from = 0;
@@ -149,7 +155,7 @@ export function tailTranscript(file, { roots = [], state = {}, maxBytes = 1024 *
   if (state.skip) {
     const end = bytes.indexOf(0x0a);
 
-    if (end < 0) return { records: [], state: { offset: offset + bytes.length, size: stat.size, identity, skip: true } };
+    if (end < 0) return { records: [], state: { offset: offset + bytes.length, ...metadata, skip: true } };
     from = end + 1;
   }
 
@@ -158,7 +164,7 @@ export function tailTranscript(file, { roots = [], state = {}, maxBytes = 1024 *
   if (newline < from) {
     const skip = from === 0 && bytes.length > 0 && bytes.length === maxBytes;
 
-    return { records: [], state: { offset: offset + (skip ? bytes.length : from), size: stat.size, identity, skip } };
+    return { records: [], state: { offset: offset + (skip ? bytes.length : from), ...metadata, skip } };
   }
 
   const records = [];
@@ -169,7 +175,7 @@ export function tailTranscript(file, { roots = [], state = {}, maxBytes = 1024 *
     try { records.push(JSON.parse(line)); } catch { /* malformed transcript lines are ignored */ }
   }
 
-  return { records, state: { offset: offset + newline + 1, size: stat.size, identity } };
+  return { records, state: { offset: offset + newline + 1, ...metadata } };
 }
 
 export async function summarizeHistory({ root = defaultRoot(), harness = 'claude' } = {}) {
