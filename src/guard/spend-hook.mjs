@@ -1,5 +1,4 @@
 import crypto from 'node:crypto';
-import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { t } from '../i18n.mjs';
@@ -26,45 +25,8 @@ const editPath = (file) => {
 
 const editPathKey = (file) => process.platform === 'win32' ? file.toLowerCase() : file;
 
-// Read metadata only. Never traverse an agent-owned link, including a Windows junction in a parent.
-const editStamp = (file) => {
-  const root = path.parse(file).root;
-  let current = root;
-  const parts = path.relative(root, file).split(path.sep).filter(Boolean);
-
-  for (const [index, part] of parts.entries()) {
-    current = path.join(current, part);
-    let stat;
-
-    try { stat = fs.lstatSync(current, { bigint: true }); } catch (error) {
-      if (error.code === 'ENOENT' && index === parts.length - 1) return 'missing';
-
-      return null;
-    }
-
-    if (stat.isSymbolicLink()) {
-      // Keep the system-owned top-level link exception used by writePrivate (/var on macOS).
-      if (process.platform !== 'win32' && stat.uid === 0n && path.dirname(current) === root && index < parts.length - 1) continue;
-
-      return null;
-    }
-
-    if (index < parts.length - 1) {
-      if (!stat.isDirectory()) return null;
-
-      continue;
-    }
-
-    if (!stat.isFile() || stat.nlink !== 1n) return null;
-
-    return `${stat.dev}:${stat.ino}:${stat.size}:${stat.mtimeNs}:${stat.ctimeNs}`;
-  }
-
-  return null;
-};
-
-const editProof = (secret, id, file) => crypto.createHmac('sha256', secret)
-  .update(`${id}\0${editPathKey(file)}`)
+const editProof = (secret, tool, id, file) => crypto.createHmac('sha256', secret)
+  .update(`${tool}\0${id}\0${editPathKey(file)}`)
   .digest('hex');
 
 const confirmedEdit = ({ spend, event, input, harness, secret, output, now }) => {
@@ -75,40 +37,48 @@ const confirmedEdit = ({ spend, event, input, harness, secret, output, now }) =>
   // oxlint-disable-next-line anti-slop/no-runtime-typeof -- Hook identifiers must be bounded before HMAC.
   if (!file || typeof id !== 'string' || !id || id.length > 256) return false;
 
-  const proof = editProof(secret, id, file);
+  const proof = editProof(secret, input.tool_name, id, file);
 
   if (event === 'PreToolUse') {
     if (output?.decision === 'block' || output?.hookSpecificOutput?.permissionDecision === 'deny') return false;
-    const before = editStamp(file);
-
-    if (before === null) return false;
-
-    spend.pendingEdit = { proof, before, at: now };
+    spend.pendingEdits = [...(spend.pendingEdits ?? []).filter((pending) => pending.proof !== proof), { proof, at: now }].slice(-8);
 
     return false;
   }
 
-  if (event !== 'PostToolUse' || spend.pendingEdit?.proof !== proof) return false;
-  const { before, at } = spend.pendingEdit;
+  if (event !== 'PostToolUse') return false;
+  const pending = spend.pendingEdits?.find((item) => item.proof === proof);
 
-  delete spend.pendingEdit;
+  if (!pending) return false;
+  const { at } = pending;
+
+  spend.pendingEdits = spend.pendingEdits.filter((item) => item.proof !== proof);
 
   if (output?.decision === 'block' || output?.hookSpecificOutput?.permissionDecision === 'deny') return false;
 
   // oxlint-disable-next-line anti-slop/no-runtime-typeof -- Tool result schema is checked without reading its text.
   const result = input.tool_response && typeof input.tool_response === 'object' && !Array.isArray(input.tool_response) ? input.tool_response : null;
 
+  const resultType = result?.type;
+
+  const validType = input.tool_name === 'Edit'
+    ? ['create', 'update', 'edit'].includes(resultType)
+    : ['create', 'update'].includes(resultType);
+
+  const hasPatch = Array.isArray(result?.structuredPatch) && result.structuredPatch.length > 0;
+
   const validResult = input.tool_name === 'Edit'
-    ? Array.isArray(result?.structuredPatch) || ['create', 'update', 'edit'].includes(result?.type)
-    : ['create', 'update'].includes(result?.type);
+    ? (resultType === undefined || validType) && (result?.structuredPatch === undefined || hasPatch) && (validType || hasPatch)
+    : validType;
 
   if (!Number.isFinite(at) || at < spend.open.start || now - at < 0 || now - at > EDIT_MAX_AGE
     || !result || editPathKey(editPath(result.filePath) ?? '') !== editPathKey(file) || !validResult
-    || result.error || result.is_error === true || result.isError === true || result.success === false) return false;
+    || (result.error !== undefined && result.error !== null && result.error !== false)
+    || (result.is_error !== undefined && result.is_error !== false)
+    || (result.isError !== undefined && result.isError !== false)
+    || (result.success !== undefined && result.success !== true)) return false;
 
-  const after = editStamp(file);
-
-  return after !== null && after !== 'missing' && after !== before;
+  return true;
 };
 
 const safeTail = (tail) => {
@@ -289,22 +259,35 @@ export async function applySpendEvent({ session, event, input, harness, adapter,
   const spend = session.spend && typeof session.spend === 'object' ? { ...session.spend } : {};
 
   let spendChanged = false;
+  let resetAfterSave = false;
   const notices = [];
   const spendLog = [];
 
-  if (spend.pendingEdit && (!Number.isFinite(spend.pendingEdit.at) || Date.now() - spend.pendingEdit.at > EDIT_MAX_AGE)) {
+  if (spend.pendingEdits !== undefined) {
+    const prior = spend.pendingEdits;
+    const now = Date.now();
+
+    spend.pendingEdits = Array.isArray(prior) ? prior.slice(-8).filter((pending) =>
+      /^[a-f0-9]{64}$/.test(pending?.proof)
+      && Number.isFinite(pending.at) && pending.at >= spend.open?.start
+      && now >= pending.at && now - pending.at <= EDIT_MAX_AGE) : [];
+
+    if (spend.pendingEdits.length !== prior?.length) spendChanged = true;
+  }
+
+  if (spend.pendingEdit !== undefined) {
     delete spend.pendingEdit;
     spendChanged = true;
   }
 
   if (harness === 'claude' && spend.open && ['Edit', 'Write'].includes(input.tool_name)
     && (event === 'PreToolUse' || event === 'PostToolUse')) {
-    const pendingBefore = spend.pendingEdit;
+    const pendingBefore = spend.pendingEdits;
     const edited = confirmedEdit({ spend, event, input, harness, secret: spendSecret(), output, now: Date.now() });
 
-    if (pendingBefore !== spend.pendingEdit) spendChanged = true;
+    if (pendingBefore !== spend.pendingEdits) spendChanged = true;
 
-    if (edited) resetLoopCalls(input.session_id, home);
+    if (edited) resetAfterSave = true;
   }
 
   // oxlint-disable-next-line anti-slop/no-runtime-typeof -- Normalized hook input is validated at this boundary.
@@ -347,7 +330,7 @@ export async function applySpendEvent({ session, event, input, harness, adapter,
 
     spend.open = { start: Date.now(), cost: 0, responses: 0, tokens: 0, label: null, costAlerted: false };
     spend.responses = [];
-    delete spend.pendingEdit;
+    delete spend.pendingEdits;
     resetLoopCalls(input.session_id, home);
     spendChanged = true;
   }
@@ -381,6 +364,8 @@ export async function applySpendEvent({ session, event, input, harness, adapter,
   }
 
   if (spendChanged) setSession(input.session_id, { spend }, home);
+
+  if (resetAfterSave) resetLoopCalls(input.session_id, home);
 
   const nextLog = [...log, ...spendLog];
   const denied = output?.decision === 'block' || output?.hookSpecificOutput?.permissionDecision === 'deny';

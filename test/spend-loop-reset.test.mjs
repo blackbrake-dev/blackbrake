@@ -4,7 +4,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { spawnSync } from 'node:child_process';
 import test from 'node:test';
-import { getSession, sessionHash, setMode } from '../src/guard/state.mjs';
+import { getSession, sessionHash, setMode, setSession } from '../src/guard/state.mjs';
 
 const fixture = () => {
   const home = fs.mkdtempSync(path.join(os.tmpdir(), 'blackbrake-loop-edit-'));
@@ -42,7 +42,7 @@ test('confirmed Claude edit clears the persisted loop window only after PostTool
   const call = edit(file);
 
   run('PreToolUse', call);
-  assert.ok(getSession('fixture-session', home).spend.pendingEdit);
+  assert.equal(getSession('fixture-session', home).spend.pendingEdits.length, 1);
   assert.equal(warned(run('PreToolUse', repeated)), true);
   fs.writeFileSync(file, 'after');
   run('PostToolUse', { ...call, tool_response: { filePath: file, type: 'update' } });
@@ -52,7 +52,7 @@ test('confirmed Claude edit clears the persisted loop window only after PostTool
 });
 
 test('forged, failed and ambiguous post events do not clear loop calls', () => {
-  for (const kind of ['no-pre', 'unchanged', 'wrong-id', 'wrong-path', 'error', 'ambiguous', 'failure-event']) {
+  for (const kind of ['no-pre', 'wrong-id', 'wrong-path', 'rewritten-path', 'wrong-tool', 'error', 'ambiguous', 'failure-event']) {
     const { file, run } = fixture();
     const call = edit(file);
 
@@ -61,18 +61,48 @@ test('forged, failed and ambiguous post events do not clear loop calls', () => {
 
     if (kind !== 'no-pre') run('PreToolUse', call);
 
-    if (!['unchanged', 'no-pre'].includes(kind)) fs.writeFileSync(file, 'after');
+    if (kind !== 'no-pre') fs.writeFileSync(file, 'after');
 
     const post = {
       ...call,
+      tool_name: kind === 'wrong-tool' ? 'Write' : call.tool_name,
+      tool_input: kind === 'rewritten-path' ? { ...call.tool_input, file_path: path.join(path.dirname(file), 'rewritten.txt') } : call.tool_input,
       tool_use_id: kind === 'wrong-id' ? 'another-edit' : call.tool_use_id,
       tool_response: kind === 'error' ? { filePath: file, type: 'error' }
         : kind === 'ambiguous' ? 'maybe edited'
-          : { filePath: kind === 'wrong-path' ? path.join(path.dirname(file), 'elsewhere.txt') : file, type: 'update' },
+          : { filePath: kind === 'wrong-path' ? path.join(path.dirname(file), 'elsewhere.txt')
+            : kind === 'rewritten-path' ? path.join(path.dirname(file), 'rewritten.txt') : file, type: 'update' },
     };
 
     run(kind === 'failure-event' ? 'PostToolUseFailure' : 'PostToolUse', post);
     assert.equal(warned(run('PreToolUse', repeated)), true, kind);
+  }
+});
+
+test('duplicated pending state cannot reset twice from a repeated post event', () => {
+  const { home, file, run } = fixture();
+  const call = edit(file);
+
+  run('PreToolUse', repeated);
+  run('PreToolUse', repeated);
+  run('PreToolUse', call);
+  const session = getSession('fixture-session', home);
+
+  setSession('fixture-session', { spend: { ...session.spend, pendingEdits: [session.spend.pendingEdits[0], session.spend.pendingEdits[0]] } }, home);
+  fs.writeFileSync(file, 'after');
+  run('PostToolUse', { ...call, tool_response: { filePath: file, type: 'update' } });
+  run('PreToolUse', repeated);
+  run('PreToolUse', repeated);
+  run('PostToolUse', { ...call, tool_response: { filePath: file, type: 'update' } });
+  assert.equal(warned(run('PreToolUse', repeated)), true);
+});
+
+test('relative, UNC and device edit paths cannot create pending evidence', () => {
+  const { home, run } = fixture();
+
+  for (const file of ['relative.txt', '//host/share/file.txt', '\\\\?\\C:\\file.txt']) {
+    run('PreToolUse', edit(file));
+    assert.equal(getSession('fixture-session', home).spend.pendingEdits?.length ?? 0, 0, file);
   }
 });
 
@@ -106,6 +136,23 @@ test('an interleaved confirmed edit resets only its active session', () => {
   assert.equal(warned(run('PreToolUse', repeated)), false);
   assert.equal(warned(run('PreToolUse', repeated)), true);
   assert.equal(warned(run('PreToolUse', { ...repeated, session_id: 'other-session' })), true);
+});
+
+test('two interleaved edits keep their separate pending evidence', () => {
+  const { file, run } = fixture();
+  const second = path.join(path.dirname(file), 'second.txt');
+  const firstCall = edit(file, 'first-edit');
+  const secondCall = edit(second, 'second-edit');
+
+  fs.writeFileSync(second, 'before');
+  run('PreToolUse', repeated);
+  run('PreToolUse', repeated);
+  run('PreToolUse', firstCall);
+  run('PreToolUse', secondCall);
+  run('PostToolUseFailure', { ...secondCall, tool_response: { filePath: second, type: 'error' } });
+  fs.writeFileSync(file, 'after');
+  run('PostToolUse', { ...firstCall, tool_response: { filePath: file, type: 'update' } });
+  assert.equal(warned(run('PreToolUse', repeated)), false);
 });
 
 test('blocked edit intent and a later forged success do not clear the window', () => {
@@ -145,22 +192,74 @@ test('Claude Edit accepts a structured patch result without a type discriminator
   run('PreToolUse', repeated);
   run('PreToolUse', call);
   fs.writeFileSync(file, 'after');
-  run('PostToolUse', { ...call, tool_response: { filePath: file, structuredPatch: [] } });
+  run('PostToolUse', { ...call, tool_response: { filePath: file, structuredPatch: [{ oldStart: 1, newStart: 1 }] } });
   assert.equal(warned(run('PreToolUse', repeated)), false);
   assert.equal(warned(run('PreToolUse', repeated)), false);
   assert.equal(warned(run('PreToolUse', repeated)), true);
 });
 
-test('edit evidence persists only opaque hashes and metadata, never tool text or paths', () => {
+test('empty or contradictory edit results do not clear calls', () => {
+  for (const tool_response of [
+    { structuredPatch: [] },
+    { structuredPatch: [], type: 'error' },
+    { structuredPatch: [{ oldStart: 1, newStart: 1 }], type: 'error' },
+    { type: 'update', success: 0 },
+  ]) {
+    const { file, run } = fixture();
+    const call = edit(file);
+
+    run('PreToolUse', repeated);
+    run('PreToolUse', repeated);
+    run('PreToolUse', call);
+    run('PostToolUse', { ...call, tool_response: { filePath: file, ...tool_response } });
+    assert.equal(warned(run('PreToolUse', repeated)), true, JSON.stringify(tool_response));
+  }
+});
+
+test('the packaged Claude hook registers the events and tools used by the proof', () => {
+  const config = JSON.parse(fs.readFileSync(new URL('../plugin/blackbrake/hooks/hooks.json', import.meta.url), 'utf8'));
+
+  assert.match(config.hooks.PreToolUse[0].matcher, /Write\|Edit/);
+  assert.equal(config.hooks.PreToolUse[0].hooks[0].args.at(-1), 'PreToolUse');
+  assert.equal(config.hooks.PostToolUse[0].hooks[0].args.at(-1), 'PostToolUse');
+  assert.equal(config.hooks.PostToolUse[0].matcher, undefined, 'all successful tools reach the hook');
+  assert.equal(config.hooks.PostToolUseFailure, undefined, 'failure events are not wired as successes');
+});
+
+test('failed pending-state persistence cannot clear the loop window', (t) => {
+  const { home, file, run } = fixture();
+  const call = edit(file);
+  const sessions = path.join(home, 'sessions');
+  const moved = path.join(home, 'sessions-original');
+
+  run('PreToolUse', repeated);
+  run('PreToolUse', repeated);
+  run('PreToolUse', call);
+  fs.writeFileSync(file, 'after');
+  fs.renameSync(sessions, moved);
+
+  try { fs.symlinkSync(moved, sessions, process.platform === 'win32' ? 'junction' : 'dir'); }
+  catch {
+    fs.renameSync(moved, sessions);
+    t.skip('directory link unavailable on this host');
+
+    return;
+  }
+
+  run('PostToolUse', { ...call, tool_response: { filePath: file, type: 'update' } });
+  assert.equal(warned(run('PreToolUse', repeated)), true);
+});
+
+test('edit evidence persists only an opaque hash and timestamp, never tool text or paths', () => {
   const { home, file, run } = fixture();
   const marker = 'PRIVATE_FIXTURE_CONTENT_SHOULD_NOT_APPEAR';
   const call = { ...edit(file), tool_input: { file_path: file, old_string: 'before', new_string: marker } };
 
   run('PreToolUse', call);
-  const pending = getSession('fixture-session', home).spend.pendingEdit;
+  const [pending] = getSession('fixture-session', home).spend.pendingEdits;
 
   assert.match(pending.proof, /^[a-f0-9]{64}$/);
-  assert.deepEqual(Object.keys(pending).sort(), ['at', 'before', 'proof']);
+  assert.deepEqual(Object.keys(pending).sort(), ['at', 'proof']);
   const stored = fs.readFileSync(path.join(home, 'sessions', `${sessionHash('fixture-session')}.json`), 'utf8');
 
   assert.equal(stored.includes(marker), false);
