@@ -5,6 +5,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { commandArgs, commandFor, findMenuRow, helpRows } from '../src/cli/registry.mjs';
 import { createCostAnalyzer } from '../src/cost/analyzer.mjs';
 import { PRICES_DATE } from '../src/cost/prices.mjs';
 import { inventory } from '../src/load/inventory.mjs';
@@ -19,6 +20,7 @@ import { defaultRoot, listTranscripts } from '../src/transcripts.mjs';
 import { buildAdvice } from '../src/advice.mjs';
 import { renderAdvice, renderAudit, renderDetails } from '../src/ui/audit-view.mjs';
 import { confirm, confirmTyped, isInteractive, launchClaude, logLines, modeBadge, statusLines, statusLineText } from '../src/guard/cli.mjs';
+import { requireHuman } from '../src/guard/human.mjs';
 import { guardInstalled, setup, uninstall } from '../src/guard/install.mjs';
 import { getMode, getSavedLang, getSetting, hasMode, MODES, readLog, setMode, setSavedLang, setSetting } from '../src/guard/state.mjs';
 import { runningAgents, severity, watch } from '../src/guard/watch.mjs';
@@ -155,7 +157,7 @@ function parseArgs(argv) {
     else if (a === '--lang') opts.lang = argv[++i];
     else if (a === '--agent') opts.agent = argv[++i];
     else if (!opts.command) opts.command = a;
-    else if (['mode', 'lang', 'window', 'background'].includes(opts.command) && !opts.rest.length) opts.rest.push(a);
+    else if (opts.rest.length < (['mode', 'lang', 'window', 'background'].includes(opts.command) ? 1 : commandArgs(opts.command))) opts.rest.push(a);
     else throw new Error(`Unknown argument: ${clean(a, 80)}`);
   }
 
@@ -576,7 +578,7 @@ async function backgroundCommand(opts, p) {
     // Switching the watcher off lowers protection: a person has to confirm it in a terminal.
     if (!(await confirmTyped(p, t('Stop the background watcher? Harnesses without hooks will no longer be watched.'), 'off', getLang() === 'es' ? 'apagar' : null))) {
       print(['', `  ${p.faint(t(isInteractive() ? 'Nothing changed.' : 'Nothing changed: this must be confirmed in an interactive terminal.'))}`, '']);
-      process.exitCode = isInteractive() ? 0 : 1;
+      process.exitCode = requireHuman().ok ? 0 : 1;
 
       return;
     }
@@ -615,6 +617,7 @@ function helpScreen(p) {
     row('blackbrake window on|off', 'alerts window when an agent starts'),
     row('blackbrake background on|off', 'hidden watcher at login'),
     row('blackbrake uninstall [--agent id]', 'remove it from every agent, or one'),
+    ...helpRows().map((r) => `${padEnd(`${p.orange(r.usage)} `, 34)}${p.cream(r.text)}`),
     row('blackbrake lang es|en|auto', 'language'),
     ]),
     '',
@@ -802,7 +805,7 @@ async function windowCommand(opts, p) {
   // Hiding alerts lowers protection like the rest: a person confirms it in a terminal.
   if (wanted === 'off' && getSetting('window', true) && !(await confirmTyped(p, t('Stop opening the alerts window? Alerts will only show if you open them.'), 'off', getLang() === 'es' ? 'apagar' : null))) {
     print(['', `  ${p.faint(t(isInteractive() ? 'Nothing changed.' : 'Nothing changed: this must be confirmed in an interactive terminal.'))}`, '']);
-    process.exitCode = isInteractive() ? 0 : 1;
+    process.exitCode = requireHuman().ok ? 0 : 1;
 
     return;
   }
@@ -832,7 +835,7 @@ async function modeCommand(opts, p) {
   // Lowering protection needs a person at a terminal: the agent's shell has none.
   if (wanted === 'observe' && !(await confirmTyped(p, t('Switch guard to observe? Secrets will be reported but no longer stopped.'), 'observe', getLang() === 'es' ? 'observar' : null))) {
     print(['', `  ${p.faint(t(isInteractive() ? 'Mode unchanged.' : 'Mode unchanged: switching to observe must be confirmed in an interactive terminal.'))}`, '']);
-    process.exitCode = isInteractive() ? 0 : 1;
+    process.exitCode = requireHuman().ok ? 0 : 1;
 
     return;
   }
@@ -849,7 +852,7 @@ async function uninstallCommand(opts, p) {
 
   if (!(await confirmTyped(p, question, 'remove', getLang() === 'es' ? 'quitar' : null))) {
     print(['', `  ${p.faint(t(isInteractive() ? 'Nothing changed.' : 'Nothing changed: removing guard must be confirmed in an interactive terminal.'))}`, '']);
-    process.exitCode = isInteractive() ? 0 : 1;
+    process.exitCode = requireHuman().ok ? 0 : 1;
 
     return;
   }
@@ -953,6 +956,17 @@ async function welcome(opts, p) {
   if (next === 'scan') scanCommand(opts, p);
 }
 
+// Rows that features registered (src/cli/registry.mjs) run themselves. Returns null when `value`
+// is not one of them, else what the row returned ({ exit: true } ends the session).
+async function runFeatureRow(value, state, opts, p) {
+  const row = findMenuRow(value);
+
+  if (!row) return null;
+  await transition(p);
+
+  return (await row.run({ p, opts, print, pkg, state })) ?? {};
+}
+
 // Home screen loop: guard, audit, then precautions or details, then back to the menu.
 async function interactive(opts, p) {
   let again = false;
@@ -989,10 +1003,30 @@ async function interactive(opts, p) {
         return;
       }
 
+      // A row a feature registered on the main menu runs itself.
+      const featured = await runFeatureRow(group, state, opts, p);
+
+      if (featured?.exit) return;
+
+      if (featured) {
+        await backToMenu(p);
+        continue;
+      }
+
       // The group's screen; "back" returns to the main menu.
       const action = await category(p, group, state);
 
       if (!action) continue;
+
+      // Same for a row a feature registered inside a group.
+      const inGroup = await runFeatureRow(action, state, opts, p);
+
+      if (inGroup?.exit) return;
+
+      if (inGroup) {
+        await backToMenu(p);
+        continue;
+      }
 
       // What the user opens now is all the terminal shows.
       await transition(p);
@@ -1113,7 +1147,16 @@ async function interactive(opts, p) {
   }
 }
 
-const help = () => (getLang() === 'es' ? HELP_ES : HELP);
+// The help text, with the commands that features registered listed before the language section.
+function help() {
+  const base = getLang() === 'es' ? HELP_ES : HELP;
+  const rows = helpRows();
+
+  if (!rows.length) return base;
+  const block = `${t('More commands:')}\n${rows.map((r) => `  ${padEnd(`${r.usage} `, 32)}${r.text}`).join('\n')}`;
+
+  return base.replace(/\n\n(Language|Idioma):/, (_, head) => `\n\n${block}\n\n${head}:`);
+}
 
 async function main() {
   let opts;
@@ -1185,12 +1228,25 @@ async function main() {
     statusline: () => console.log(statusLineText(createPainter(3), readStdinJson())),
   };
 
-  if (!commands[opts.command]) {
+  // Built-in commands win; then the ones features registered (src/cli/registry.mjs), whose
+  // run() resolves to an exit code.
+  const feature = commandFor(opts.command);
+  const builtIn = Object.hasOwn(commands, opts.command) ? commands[opts.command] : null;
+
+  if (!builtIn && !feature) {
     console.error(`${t('Unknown command: {c}', { c: clean(opts.command, 80) })}\n\n${help()}`);
     process.exit(2);
   }
 
-  await commands[opts.command]();
+  if (builtIn) {
+    await builtIn();
+
+    return;
+  }
+
+  const code = await feature.run({ p, opts, print, pkg });
+
+  if (code) process.exitCode = code;
 }
 
 main().catch((e) => {

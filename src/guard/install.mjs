@@ -254,4 +254,4 @@ export function uninstall({ keepLog = true, log = () => {} } = {}) {
   log(keepLog ? t('Kept your guard log in {dir}', { dir: path.join(home, 'log') }) : t('Deleted {dir}', { dir: home }));
 }
 
-const GUARD_ENTRIES = new Set(['state.json', 'log', 'sessions', 'marketplace', 'app', 'backups', 'watch.pid', 'watch-bg.pid', 'window.claim', 'fixes']);
+export const GUARD_ENTRIES = new Set(['state.json', 'log', 'sessions', 'marketplace', 'app', 'backups', 'watch.pid', 'watch-bg.pid', 'window.claim', 'window.last', 'fixes', 'reports']);

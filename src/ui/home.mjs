@@ -1,4 +1,5 @@
 // Home screen: what `blackbrake` shows when run with no command in an interactive terminal.
+import { menuItems } from '../cli/registry.mjs';
 import { getLang, t } from '../i18n.mjs';
 import { select } from './menu.mjs';
 import { transition } from './motion.mjs';
@@ -62,18 +63,36 @@ export const CATEGORIES = {
   more: { label: 'MORE', title: 'help, language and privacy', pose: 'happy' },
 };
 
-export function homeItems({ installed = false, mode = 'observe', protectedCount = 0, detectedCount = 0, running = 0, live = running > 0 } = {}, p = null) {
-  return [
+// Puts the rows that features registered (src/cli/registry.mjs) between the built-in ones, by
+// their `order` (the built-in rows count 10, 20, 30…), and keeps the closing row (`tail`) last.
+function withFeatureRows(slot, items, tail, state, p) {
+  const extra = menuItems(slot, state, p);
+
+  if (!extra.length) return items;
+
+  const merged = [...items.filter((i) => i.value !== tail).map((item, i) => ({ order: (i + 1) * 10, item })), ...extra].sort((a, b) => a.order - b.order);
+
+  return [...merged.map((m) => m.item), ...items.filter((i) => i.value === tail)];
+}
+
+// `features: false` leaves out the registered rows (the fixed core of the menu).
+export function homeItems(state = {}, p = null, { features = true } = {}) {
+  const { installed = false, mode = 'observe', protectedCount = 0, detectedCount = 0, running = 0, live = running > 0 } = state;
+
+  const items = [
     { value: 'live', label: t('Live session'), tag: p ? liveBadge(p, live) : null, rawTag: true, pulse: live, hint: t('live alerts · open Claude Code · recent events') },
     { value: 'audit', label: t('Audit'), hint: t('Claude Code audit · scan every AI harness for secrets') },
     { value: 'protect', label: t('Protection and permissions'), hint: installed ? t('{a} of {b} harnesses · mode {mode} · permissions', { a: protectedCount, b: detectedCount, mode: t(mode) }) : t('set up blackbrake in your AI harnesses') },
     { value: 'more', label: t('Help and settings'), hint: t('commands · language · privacy') },
-    { value: 'quit', label: t('Quit') },
+    { value: 'quit', label: t('Close this menu'), hint: t('protection keeps running') },
   ];
+
+  return features ? withFeatureRows('main', items, 'quit', state, p) : items;
 }
 
 // What each group holds.
-export function categoryItems(cat, { installed = false, claude = installed, mode = 'observe', protectedCount = 0, detectedCount = 0, running = 0, live = running > 0, animations = true, isAccessible = false, light = false } = {}, p = null) {
+export function categoryItems(cat, state = {}, p = null, { features = true } = {}) {
+  const { installed = false, claude = installed, mode = 'observe', protectedCount = 0, detectedCount = 0, running = 0, live = running > 0, animations = true, isAccessible = false, light = false } = state;
   const protect = mode === 'protect';
   const back = { value: 'back', label: t('Back to the main menu') };
 
@@ -103,10 +122,12 @@ export function categoryItems(cat, { installed = false, claude = installed, mode
     ],
   };
 
-  return [...(items[cat] ?? []), back];
+  const rows = items[cat] ?? [];
+
+  return [...(features ? withFeatureRows(cat, rows, null, state, p) : rows), back];
 }
 
-export const HOME_ITEMS = homeItems();
+export const HOME_ITEMS = homeItems({}, null, { features: false });
 
 // Leaving: the mascot dozes off; if the background watcher runs, it says so.
 export function goodbye(p, { watching = false } = {}) {

@@ -12,6 +12,7 @@ import { select } from '../ui/menu.mjs';
 import { columns, padEnd, screen } from '../ui/term.mjs';
 import { AGENTS } from './agents.mjs';
 import { claudeCommand, guardInstalled, PLUGIN_ID } from './install.mjs';
+import { requireHuman } from './human.mjs';
 import { getSpendBaseline } from './spend-state.mjs';
 import { getMode, guardHome, readLog, sessionHash } from './state.mjs';
 
@@ -36,7 +37,8 @@ const KIND = {
 
 const interesting = (e) => e.kind in KIND;
 
-export const isInteractive = () => Boolean(process.stdin.isTTY && process.stdout.isTTY);
+// `io` (tests): { input, output } instead of the process's own streams.
+export const isInteractive = ({ input = process.stdin, output = process.stdout } = {}) => Boolean(input?.isTTY && output?.isTTY);
 
 // Ask a yes/no question in the terminal; "No" is preselected. Without a terminal: no.
 export async function confirm(p, question) {
@@ -46,10 +48,21 @@ export async function confirm(p, question) {
   return (await select(p, [{ value: false, label: t('No') }, { value: true, label: t('Yes') }])) === true;
 }
 
-// For lowering protection: the person has to type a word, not just press Enter.
-export async function confirmTyped(p, question, word, alias = null) {
-  if (!isInteractive()) return false;
-  const rl = readline.createInterface({ input: process.stdin, output: process.stdout });
+// For lowering protection: the person has to type a word, not just press Enter, and has to be a
+// person (see human.mjs): inside an AI agent it says how to do it properly and changes nothing.
+// `io` (tests): { input, output, env } instead of the process's own streams and environment.
+export async function confirmTyped(p, question, word, alias = null, io = {}) {
+  const input = io.input ?? process.stdin;
+  const output = io.output ?? process.stdout;
+  const human = requireHuman({ env: io.env, input, output });
+
+  if (!human.ok) {
+    if (human.reason === 'agent') output.write(`\n  ${p.amber(human.message)}\n  ${p.faint(human.how)}\n`);
+
+    return false;
+  }
+
+  const rl = readline.createInterface({ input, output });
   const answer = await new Promise((resolve) => rl.question(`\n  ${p.cream(question)}\n  ${p.faint(t('Type "{w}" to confirm, anything else to cancel:', { w: alias ?? word }))} `, resolve));
   rl.close();
 

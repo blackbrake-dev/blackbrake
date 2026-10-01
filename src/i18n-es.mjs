@@ -1,5 +1,10 @@
 // Spanish (Spain) interface text. Key: the English text as written in the code.
 // Conventions: tuteo, sentence case, "clave" for key/secret value, "complemento" for add-on.
+import * as scaffold from './i18n/es-scaffold.mjs';
+import * as pause from './i18n/es-pause.mjs';
+import * as report from './i18n/es-report.mjs';
+import * as uninstall from './i18n/es-uninstall.mjs';
+
 export const ES = {
   'blackbrake guard · PROTECT: risky actions are checked before execution. Prompt blocking and output redaction depend on the agent\'s hook capabilities.': 'blackbrake guard · PROTEGER: las acciones de riesgo se revisan antes de ejecutarse. El bloqueo de mensajes y la ocultación de salidas dependen de los ganchos del agente.',
   'blackbrake withheld this result because encoded credentials could not be safely redacted.': 'blackbrake ocultó este resultado porque no pudo enmascarar las credenciales codificadas con seguridad.',
@@ -680,3 +685,21 @@ export const ES_PATTERNS = [
   [/^kept in (.+)$/, ([s], tr) => `conservada en ${tr(s)}`],
   [/^project config \((.+)\)$/, 'configuración del proyecto ($1)'],
 ];
+
+// Text that belongs to one feature lives in src/i18n/es-<name>.mjs (`export const ES = { 'English': 'Español' }`,
+// optionally `ES_PATTERNS`) and is merged here at load, so a feature never edits the big table above.
+// A key that already exists is never overridden.
+// To add a file: import it above and list it in FEATURE_TEXTS (test/scaffold.test.mjs fails if a
+// src/i18n/es-*.mjs file is missing from this list). The list is static on purpose: the guard test
+// forbids computed dynamic imports, and static imports cost less at each hook start.
+export const FEATURE_TEXTS = [scaffold, pause, report, uninstall];
+
+export function mergeFeatureTranslations(modules, target = ES, patterns = ES_PATTERNS) {
+  for (const mod of modules) {
+    for (const [k, v] of Object.entries(mod.ES ?? {})) if (v === `${v}` && k !== '__proto__' && !Object.hasOwn(target, k)) target[k] = v;
+
+    for (const pattern of mod.ES_PATTERNS ?? []) if (Array.isArray(pattern) && pattern[0] instanceof RegExp) patterns.push(pattern);
+  }
+}
+
+mergeFeatureTranslations(FEATURE_TEXTS);
