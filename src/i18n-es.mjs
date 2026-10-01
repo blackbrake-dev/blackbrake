@@ -2,6 +2,7 @@
 // Conventions: tuteo, sentence case, "clave" for key/secret value, "complemento" for add-on.
 import * as scaffold from './i18n/es-scaffold.mjs';
 import * as pause from './i18n/es-pause.mjs';
+import * as windowText from './i18n/es-window.mjs';
 import * as report from './i18n/es-report.mjs';
 import * as uninstall from './i18n/es-uninstall.mjs';
 
@@ -692,7 +693,7 @@ export const ES_PATTERNS = [
 // To add a file: import it above and list it in FEATURE_TEXTS (test/scaffold.test.mjs fails if a
 // src/i18n/es-*.mjs file is missing from this list). The list is static on purpose: the guard test
 // forbids computed dynamic imports, and static imports cost less at each hook start.
-export const FEATURE_TEXTS = [scaffold, pause, report, uninstall];
+export const FEATURE_TEXTS = [scaffold, pause, report, uninstall, windowText];
 
 export function mergeFeatureTranslations(modules, target = ES, patterns = ES_PATTERNS) {
   for (const mod of modules) {

@@ -662,7 +662,7 @@ function permissionItems({ fresh = false } = {}) {
     { heading: true, label: t('How blackbrake runs') },
     { value: 'observe', label: t('Observe mode (recommended to start)'), on: fresh || getMode() === 'observe', hint: t('warns only; off = protect: stops risky steps') },
     { value: 'background', label: t('Background watcher at login'), on: fresh ? getSetting('autostart', true) : autostartInstalled(), hint: t('a login item that starts it hidden: {file}', { file: autostartFile() }) },
-    { value: 'window', label: t('Alerts window when an agent starts'), on: getSetting('window', true), hint: t('opens a terminal window with the live alerts') },
+    { value: 'window', label: t("Open blackbrake's live alerts when an AI harness starts"), on: getSetting('window', true), hint: t('separate from protection: turning it off does not turn guard off') },
     { value: 'notify', label: t('System notifications'), on: getSetting('notify', true), hint: t('for high and maximum alerts') },
     { value: 'sound', label: t('Sound'), on: getSetting('sound', true), hint: t('the terminal bell on high and maximum alerts') },
   );
@@ -811,7 +811,7 @@ async function windowCommand(opts, p) {
   }
 
   if (wanted) setSetting('window', wanted === 'on');
-  print(['', `  ${p.faint(t('Alerts window when an agent starts'))} ${p.cream(t(getSetting('window', true) ? 'on' : 'off'))}`, '']);
+  print(['', `  ${p.faint(t("Open blackbrake's live alerts when an AI harness starts"))} ${p.cream(t(getSetting('window', true) ? 'on' : 'off'))}`, `  ${p.faint(t('Needs guard or the background watcher running.'))}`, '']);
 }
 
 async function modeCommand(opts, p) {

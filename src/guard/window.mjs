@@ -117,16 +117,61 @@ export function liveWindowRunning({ platform = process.platform, run = spawnSync
   }
 }
 
-// Called from the hook on every event; cheap when there is nothing to do.
-export function maybeOpenWindow(sessionId, { home = guardHome(), env = process.env, cli, spawner = spawn, command = windowCommand, running = liveWindowRunning } = {}) {
+// An automatic opening is at most one per 10 minutes for the whole user (mtime of `window.last`):
+// a script that starts `claude -p` a hundred times, or a fleet of workers, opens one window.
+export const WINDOW_COOLDOWN_MS = 10 * 60e3;
+
+const SSH_VARS = ['SSH_CONNECTION', 'SSH_CLIENT', 'SSH_TTY'];
+
+// A paused blackbrake (`settings.paused = { at: ISO }`) opens nothing. Reading is tolerant: anything
+// else than a well-formed mark counts as not paused (the failure is towards active protection).
+const isPaused = (home) => {
+  const mark = getSetting('paused', null, home);
+
+  return Object.prototype.toString.call(mark) === '[object Object]' && Number.isFinite(Date.parse(mark.at));
+};
+
+// Why the window must not open now, or null. The first rule that matches decides:
+// paused, off, display, ssh, background, then the session/watcher dedupe and the cooldown.
+// Read-only: it writes nothing (maybeOpenWindow marks the session).
+export function windowSkipReason(sessionId, { home = guardHome(), env = process.env, platform = process.platform, background = false, now = Date.now() } = {}) {
+  if (isPaused(home)) return 'paused';
+
   // The user's setting decides; an agent that sets CI for its tools does not hide the window.
   // BLACKBRAKE_NO_WINDOW is for blackbrake's own tests (an agent writing it into its settings is
   // refused by guard as tampering).
-  if (!getSetting('window', true, home) || env.BLACKBRAKE_NO_WINDOW) return false;
+  if (!getSetting('window', true, home) || env.BLACKBRAKE_NO_WINDOW) return 'off';
 
-  if (process.platform === 'linux' && !env.DISPLAY && !env.WAYLAND_DISPLAY) return false;
+  if (platform === 'linux' && !env.DISPLAY && !env.WAYLAND_DISPLAY) return 'display';
 
-  if (getSession(sessionId, home).windowOpened || isWatchRunning(home)) return false;
+  // Over SSH on macOS or Windows the window would open on the remote machine's console, which
+  // nobody watches. On Linux the display rule above decides (X11 forwarding shows it to the user).
+  if ((platform === 'darwin' || platform === 'win32') && SSH_VARS.some((k) => env[k])) return 'ssh';
+
+  // Cursor's background agents (`is_background_agent: true`) run unattended.
+  if (background === true) return 'background';
+
+  if (getSession(sessionId, home).windowOpened) return 'session';
+
+  if (isWatchRunning(home)) return 'watching';
+
+  try {
+    if (now - fs.statSync(path.join(home, 'window.last')).mtimeMs < WINDOW_COOLDOWN_MS) return 'cooldown';
+  } catch { /* never opened automatically */ }
+
+  return null;
+}
+
+// Called from the hook on every event; cheap when there is nothing to do.
+export function maybeOpenWindow(sessionId, { home = guardHome(), env = process.env, platform = process.platform, background = false, cli, spawner = spawn, command = windowCommand, running = liveWindowRunning } = {}) {
+  const why = windowSkipReason(sessionId, { home, env, platform, background });
+
+  if (why) {
+    // The cooldown holds this session back for good: a window must not pop up half-way through a long one.
+    if (why === 'cooldown') setSession(sessionId, { windowOpened: new Date().toISOString(), windowSkipped: 'cooldown' }, home);
+
+    return false;
+  }
 
   // Two hooks of the same session can run at once: only the one that creates this file opens.
   const claim = path.join(home, 'window.claim');
@@ -153,6 +198,9 @@ export function maybeOpenWindow(sessionId, { home = guardHome(), env = process.e
   const c = command(process.execPath, cli);
 
   if (!c) return false;
+
+  // Only the mtime counts: an empty file, written when an opening is attempted.
+  try { fs.writeFileSync(path.join(home, 'window.last'), '', { mode: 0o600 }); } catch { /* the claim still limits repeats */ }
 
   try {
     const child = spawner(c.file, c.args, { detached: true, stdio: 'ignore', windowsHide: false, env: windowEnv(env, home) });

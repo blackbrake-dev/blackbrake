@@ -458,7 +458,7 @@ async function main() {
     emit(adapter.render(event, output, { native: nativeEvent, input }));
 
     // The alerts window, once per session (after answering: it never delays the agent).
-    try { maybeOpenWindow(input.session_id, { home, cli: path.join(path.dirname(fileURLToPath(import.meta.url)), 'watch-main.mjs') }); } catch { /* optional */ }
+    try { maybeOpenWindow(input.session_id, { home, background: harness === 'cursor' && input.is_background_agent === true, cli: path.join(path.dirname(fileURLToPath(import.meta.url)), 'watch-main.mjs') }); } catch { /* optional */ }
   } catch (e) {
     // No unchecked suffix is safe: refusing oversize tool calls keeps padding from bypassing
     // the mandatory tamper check in either mode.
