@@ -6,6 +6,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { commandArgs, commandFor, findMenuRow, helpRows } from '../src/cli/registry.mjs';
+import { runUninstall } from '../src/cli/features/uninstall-menu.mjs';
 import { createCostAnalyzer } from '../src/cost/analyzer.mjs';
 import { PRICES_DATE } from '../src/cost/prices.mjs';
 import { inventory } from '../src/load/inventory.mjs';
@@ -844,32 +845,11 @@ async function modeCommand(opts, p) {
   print(['', `  ${p.amber('✓')} ${t('guard is now in')} ${modeBadge(p, wanted)} ${p.faint(t(wanted === 'protect' ? 'secrets are stopped before they are sent' : 'warns and logs; nothing is stopped'))}`, '']);
 }
 
+// The flow lives in src/cli/features/uninstall-menu.mjs (the menu row shares it).
 async function uninstallCommand(opts, p) {
-  // Without --agent: every agent that has it.
-  const ids = opts.agent && opts.agent !== 'all' ? agentList(opts.agent) : agentStatus().filter((a) => a.installed).map((a) => a.id);
+  const code = await runUninstall(opts, p);
 
-  const question = opts.purge ? t('Remove guard and delete its log?') : t('Remove blackbrake from {list}?', { list: ids.map(nameOf).join(', ') || t('every agent') });
-
-  if (!(await confirmTyped(p, question, 'remove', getLang() === 'es' ? 'quitar' : null))) {
-    print(['', `  ${p.faint(t(isInteractive() ? 'Nothing changed.' : 'Nothing changed: removing guard must be confirmed in an interactive terminal.'))}`, '']);
-    process.exitCode = requireHuman().ok ? 0 : 1;
-
-    return;
-  }
-
-  const log = (m) => print([`  ${p.amber('✓')} ${t(m)}`]);
-
-  // --purge deletes ~/.blackbrake, which other agents' hooks run from: all of them must go, checked
-  // before anything is removed.
-  if (opts.purge && Object.values(AGENTS).some((a) => { if (ids.includes(a.id) || !fs.existsSync(a.configFile())) return false;
-
- try { return a.installed(true); } catch { return true; } })) throw new Error(t('Other agents still use guard; remove them too (--agent all) before --purge.'));
-
-  // Removing it from everything also stops the background watcher and its login item.
-  if ((!opts.agent || opts.agent === 'all') && removeAutostart()) log(t('Stopped the background watcher and removed its login item'));
-  uninstallAgents(ids.filter((id) => id !== 'claude'), { log });
-
-  if (ids.includes('claude')) uninstall({ keepLog: !opts.purge, log });
+  if (code) process.exitCode = code;
 }
 
 async function claudeCommand(opts, p) {

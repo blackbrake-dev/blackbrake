@@ -193,7 +193,7 @@ test('the package does not import any network module', () => {
 test('child processes: only from the guard installer, launcher, notifier and alerts window', () => {
   const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
   const files = ['bin', 'src', 'plugin'].flatMap((d) => listJs(path.join(root, d)));
-  const allowed = new Set(['src/guard/install.mjs', 'src/guard/cli.mjs', 'src/guard/watch.mjs', 'src/guard/window.mjs', 'src/guard/background.mjs', 'src/guard/autostart.mjs', 'src/fix/agent.mjs']);
+  const allowed = new Set(['src/guard/install.mjs', 'src/guard/cli.mjs', 'src/guard/watch.mjs', 'src/guard/window.mjs', 'src/guard/background.mjs', 'src/guard/autostart.mjs', 'src/guard/procs.mjs', 'src/fix/agent.mjs']);
 
   for (const f of files) {
     const text = fs.readFileSync(f, 'utf8');

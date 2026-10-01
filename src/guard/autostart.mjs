@@ -12,6 +12,7 @@ import path from 'node:path';
 import { isBackgroundRunning } from './background.mjs';
 import { assertNoLinks } from './install.mjs';
 import { loginItemFile } from './policy.mjs';
+import { bootoutLaunchAgent, stopBlackbrake } from './procs.mjs';
 import { guardHome } from './state.mjs';
 import { systemProgram } from './window.mjs';
 
@@ -100,7 +101,17 @@ export function isWatcherProcess(pid, { platform = process.platform, run = spawn
   }
 }
 
-export function removeAutostart({ home = guardHome(), file = autostartFile(), kill = true } = {}) {
+// Removes the login item and stops the background watcher.
+//   default  the watcher named by the pid file, after checking the pid is really blackbrake's
+//            (`background off`, `permissions`: they only touch this folder's watcher).
+//   sweep    the whole process table instead (src/guard/procs.mjs), for uninstall and pause: every
+//            watcher of this user, whichever folder it runs from, each re-verified before it is
+//            signalled; `windows` also closes the alerts windows. On macOS launchd is told to let
+//            go of the login item too (only for the user's real one: a custom `file` is somebody's
+//            test or another copy). `onSweep` receives what a second sweep still found:
+//            { watchers: { found, remaining }, windows: { found, remaining }, launchd }.
+// Returns whether the login item file was removed.
+export function removeAutostart({ home = guardHome(), file = autostartFile(), kill = true, sweep = false, windows = false, sweepOptions = {}, launchd = file === autostartFile(), onSweep = null } = {}) {
   let removed = false;
 
   try {
@@ -114,6 +125,15 @@ export function removeAutostart({ home = guardHome(), file = autostartFile(), ki
       removed = true;
     }
   } catch { /* not there */ }
+
+  if (sweep && kill) {
+    const unloaded = launchd ? bootoutLaunchAgent(sweepOptions) : 'skipped';
+    const stopped = stopBlackbrake({ windows, ...sweepOptions });
+
+    onSweep?.({ ...stopped, launchd: unloaded });
+
+    return removed;
+  }
 
   // Stop the running watcher, after checking that the pid really is a node process running
   // blackbrake's watcher (a planted pid file must not make this kill something else).
