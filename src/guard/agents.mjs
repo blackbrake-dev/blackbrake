@@ -18,6 +18,7 @@ import { appManifest, assertOwnFolder } from './install.mjs';
 export { appManifest };
 
 import { getMode, guardHome, hasMode, setMode } from './state.mjs';
+import { isRecord } from '../kinds.mjs';
 
 const PKG_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..');
 
@@ -95,7 +96,7 @@ function readConfig(file) {
   try {
     const value = JSON.parse(text);
 
-    if (value && typeof value === 'object' && !Array.isArray(value)) return value;
+    if (isRecord(value)) return value;
   } catch { /* reported below */ }
 
   throw new Error(t('{file} is not valid JSON; blackbrake will not change it. Fix it and run setup again.', { file }));

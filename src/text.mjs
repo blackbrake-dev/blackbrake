@@ -1,4 +1,5 @@
 import fs from 'node:fs';
+import { isObject, isText } from './kinds.mjs';
 
 // Text that comes from disk or from the agent (skill names, file paths, MCP server names, tool
 // names) is printed to the terminal and shown inside Claude Code. It must not carry control
@@ -10,18 +11,18 @@ const UNSAFE = /[\u0000-\u0008\u000b-\u001f\u007f-\u009f\u00ad\u061c\u115f\u1160
 
 // Every string inside a plain object or array, cleaned (for data about to be shown or exported).
 export function cleanDeep(value, max = 500) {
-  if (typeof value === 'string') return clean(value, max);
+  if (isText(value)) return clean(value, max);
 
   if (Array.isArray(value)) return value.map((v) => cleanDeep(v, max));
 
-  if (value && typeof value === 'object') return Object.fromEntries(Object.entries(value).map(([k, v]) => [clean(k, max), cleanDeep(v, max)]));
+  if (isObject(value)) return Object.fromEntries(Object.entries(value).map(([k, v]) => [clean(k, max), cleanDeep(v, max)]));
 
   return value;
 }
 
 // Local paths only. On Windows a UNC path (\\host\share) or device path (\\.\, \\?\) makes a
 // plain file read open a network connection (and send the user's NTLM hash) or block on a device.
-export const isLocalPath = (p) => typeof p === 'string' && p.length > 0 && !/^[\\/]{2}/.test(p);
+export const isLocalPath = (p) => isText(p) && p.length > 0 && !/^[\\/]{2}/.test(p);
 
 // A regular file on a local disk, following a symlink only if it lands on a local regular file
 // (dotfile setups symlink settings.json; a planted link to \\host\share or a device is refused).
