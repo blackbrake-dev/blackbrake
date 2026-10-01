@@ -44,8 +44,9 @@ function readStdin() {
     process.stdin.once('end', () => {
       clearTimeout(timer);
 
+      // Cursor on Windows starts the JSON with a byte order mark (seen in a real session, 2026-10-01).
       if (size > MAX_INPUT) reject(new TooLarge(''));
-      else resolve(Buffer.concat(chunks).toString('utf8'));
+      else resolve(Buffer.concat(chunks).toString('utf8').replace(/^﻿/, ''));
     });
     process.stdin.once('error', (e) => { clearTimeout(timer); reject(e); });
   });
