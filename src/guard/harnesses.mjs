@@ -163,6 +163,7 @@ const cursor = {
     preToolUse: 'PreToolUse',
     postToolUse: 'PostToolUse',
     preCompact: 'PostCompact',
+    sessionStart: 'SessionStart',
     sessionEnd: 'SessionEnd',
   },
   // Check generic hooks too: a dedicated hook may be absent or have failed.
@@ -171,6 +172,9 @@ const cursor = {
     const session_id = raw.conversation_id;
 
     if (native === 'beforeSubmitPrompt') return { event, input: { session_id, prompt: raw.prompt } };
+
+    // Only what guard uses: the session and whether it is a background agent (no e-mail, model or folders).
+    if (native === 'sessionStart') return { event, input: { session_id, is_background_agent: raw.is_background_agent === true } };
 
     if (native === 'beforeShellExecution') return { event, input: { session_id, tool_name: 'Bash', tool_input: { command: raw.command } } };
 
@@ -197,6 +201,9 @@ const cursor = {
   },
   render(event, out, { native, input = {} }) {
     if (native === 'beforeSubmitPrompt') return blocked(out) ? json({ continue: false, user_message: out.reason }) : json({ continue: true });
+
+    // Nothing to add at the start of a session (seen accepted by a real cursor-agent, 2026-10-01).
+    if (event === 'SessionStart') return json({});
 
     if (event === 'PreToolUse') {
       const d = decisionOf(out);

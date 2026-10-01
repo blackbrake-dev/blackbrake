@@ -270,7 +270,7 @@ const cursor = flatAgent({
   name: 'Cursor',
   dir: () => path.join(os.homedir(), '.cursor'),
   file: () => path.join(os.homedir(), '.cursor', 'hooks.json'),
-  events: ['beforeSubmitPrompt', 'beforeShellExecution', 'beforeReadFile', 'beforeMCPExecution', 'preToolUse', 'postToolUse', 'preCompact'],
+  events: ['sessionStart', 'beforeSubmitPrompt', 'beforeShellExecution', 'beforeReadFile', 'beforeMCPExecution', 'preToolUse', 'postToolUse', 'preCompact'],
   handler: (hook, event) => ({ command: `node ${quoted(hook)} ${event} --harness cursor`, timeout: 30 }),
   base: { version: 1 },
 });
