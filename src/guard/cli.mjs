@@ -16,7 +16,7 @@ import { requireHuman } from './human.mjs';
 import { getSpendBaseline } from './spend-state.mjs';
 import { getMode, guardHome, readLog, sessionHash } from './state.mjs';
 
-const KIND = {
+export const KIND = {
   'secret-in-prompt': 'secret in your message',
   'secret-in-output': 'secret in tool output',
   'secret-in-write': 'secret written to a file',

@@ -9,11 +9,12 @@ blackbrake
 
 Install it once and open it from any folder by typing `blackbrake`, like `claude` or `gemini`. It
 installs one package with no dependencies and no install scripts, published with npm provenance
-(`npm audit signatures` verifies it). To try it without installing anything: `npx blackbrake`
-(or `npx blackbrake audit` for the report alone). Update with `npm install -g blackbrake@latest`,
-then run `blackbrake setup` so guard's own copy (`~/.blackbrake/app`) is refreshed too
-(`blackbrake status` tells you if it is out of date). To remove it: `blackbrake uninstall` first
-(add `--purge` to also delete `~/.blackbrake`: log, state and backups), then `npm uninstall -g blackbrake`.
+(`npm audit signatures` verifies it). Current stable: **v0.2.3** (published 2026-09-28); development:
+v0.3.0-dev (local, Wave 1 complete, pending security review and native validation). To try it without
+installing anything: `npx blackbrake` (or `npx blackbrake audit` for the report alone). Update with
+`npm install -g blackbrake@latest`, then run `blackbrake setup` so guard's own copy (`~/.blackbrake/app`)
+is refreshed too (`blackbrake status` tells you if it is out of date). To remove it: `blackbrake uninstall`
+first (add `--purge` to also delete `~/.blackbrake`: log, state and backups), then `npm uninstall -g blackbrake`.
 
 ## What it does NOT do
 
@@ -30,9 +31,9 @@ Read this first. It is the reason you can run it.
 - **No dependencies.** Zero runtime packages. What you install is the code in this repository.
 - **No AI.** Detection is deterministic: regular expressions, entropy and context rules.
 
-## What it does (v0)
+## What it does (v0.3-dev, Wave 1)
 
-One screen, three sections, from files Claude Code already keeps on your machine
+**Audit screen** — three sections, from files Claude Code already keeps on your machine
 (`~/.claude/projects/**/*.jsonl`, `~/.claude/`, `~/.claude.json`):
 
 1. **Exposure** — secrets that ended up in your transcripts.
@@ -41,6 +42,12 @@ One screen, three sections, from files Claude Code already keeps on your machine
 3. **Spend** — where your agent spend concentrates: your costliest 10% of episodes, your typical
    and 90th-percentile episode, the fixed context you pay on every turn. Descriptive only: no
    "you could save X%" claims.
+
+**Home screen** — menu with shortcuts to audit, guard status, reports, and actions:
+- **Uninstall** — quick removal with confirmation (F6.2)
+- **Pause all** — stop guard and watchdog with typed confirmation (F6.2)
+- **Reports** — opt-in local reports of aggregated patterns and user feedback, no telemetry (F6.7)
+- **Web preview** — installation and setup guide for Linux/macOS, responsive (F6.9)
 
 ### Exposure
 
@@ -294,11 +301,16 @@ set `NO_COLOR=1` to turn it off.
 
 Requires Node.js 20 or later.
 
-## Roadmap
+## Status and Roadmap
 
-A real-time `guard` that starts in observe-only mode (cost and damage brakes with session
-context, built on [cc-safety-net](https://github.com/kenryu42/cc-safety-net) rather than
-replacing it). Other agents (Codex, Cursor) after that.
+**[DONE] Wave 1 (v0.3-dev, 2026-10-01):** Uninstall/pause menu (F6.2), opt-in local reports (F6.7),
+web preview with native install guides (F6.9). 400/402 tests pass (2 skipped). Security: C1 finding
+confirmed (flag tampering), 4 low plausible positives documented. Pending: deep security review with
+agents, native validation on macOS/Linux, CI on 3 OS × 3 Node before publish.
+
+**[PLANNED] Wave 2:** Cost and damage brakes with session context built on
+[cc-safety-net](https://github.com/kenryu42/cc-safety-net) rather than replacing it. Full guard
+in observe mode for all seven agents. Other features per monetization plan and user decision.
 
 ## Credits
 
