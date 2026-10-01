@@ -9,9 +9,11 @@
 import { assertKind, META_LINE, validateReport } from './validate.mjs';
 
 export const RECIPIENTS = Object.freeze({ product: 'hello@blackbrake.dev', security: 'security@blackbrake.dev' });
+
 export const MAX_URL = 1800;
 
 const VERSION = /^\d{1,3}\.\d{1,3}\.\d{1,3}$/;
+
 const UNRESERVED = /[A-Za-z0-9\-._~]/;
 
 // Every byte except the unreserved set; line breaks are CRLF, as RFC 6068 asks for a body.

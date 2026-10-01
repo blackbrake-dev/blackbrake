@@ -10,7 +10,9 @@ import { loadRules, scanText } from '../secrets/engine.mjs';
 import { isSafeReportChar } from '../text.mjs';
 
 export const LIMITS = Object.freeze({ bytes: 8192, lines: 120, lineChars: 200, problems: 40 });
+
 export const KINDS = Object.freeze(['product', 'security']);
+
 export const TITLES = Object.freeze({ product: 'blackbrake report (product)', security: 'blackbrake report (security)' });
 
 // The sections the automatic data can add, one per box the person ticks (all off by default).
@@ -20,7 +22,9 @@ export const AUTO_SECTIONS = Object.freeze({
   secrets: 'Kinds of secrets involved',
   problems: 'Problems blackbrake had',
 });
+
 const AUTO = Object.values(AUTO_SECTIONS);
+
 // The only "## " headings a report may have, in the order the builder writes them.
 export const HEADINGS = Object.freeze({
   product: Object.freeze(['Summary', 'What happened', 'What you expected', ...AUTO]),
@@ -29,6 +33,7 @@ export const HEADINGS = Object.freeze({
 
 // Line 2 of every report. (The design example used a middle dot, which is outside the alphabet.)
 export const META_LINE = /^Version: (\d{1,3}\.\d{1,3}\.\d{1,3}), Date: \d{4}-\d{2}-\d{2}$/;
+
 const FILE_NAME = /^(product|security)-(\d{4})(\d{2})(\d{2})T(\d{2})(\d{2})(\d{2})Z-[0-9a-f]{8}\.md$/;
 
 export function assertKind(kind) {
@@ -46,6 +51,7 @@ export function isReportFileName(name) {
 }
 
 let cachedRules = null;
+
 const defaultRules = () => (cachedRules ??= loadRules());
 
 // Names that would identify the person or the machine. Shorter than 3 characters are ignored (they
@@ -58,7 +64,9 @@ function defaultIdentity() {
 
 function prepareIdentity(identity) {
   const id = identity ?? defaultIdentity();
-  const pick = (v) => { const s = String(v ?? '').toLowerCase().replaceAll('\\', '/'); return s.length >= 3 ? s : null; };
+  const pick = (v) => { const s = String(v ?? '').toLowerCase().replaceAll('\\', '/');
+
+ return s.length >= 3 ? s : null; };
 
   return { home: pick(id.home), user: pick(id.user), host: pick(id.host) };
 }
@@ -117,14 +125,23 @@ const LINK = /:\/\/|www\.|(?<![a-z0-9])(?:mailto|javascript|data|file):/i;
 // V7 (shape part). A path, a long hexadecimal or base64-looking run, or an address identifies
 // something the person did not mean to share.
 const PATH_DRIVE = /(?<![A-Za-z0-9])[A-Za-z]:[\\/]/;
+
 const PATH_LEAD = /(?:^|[\s"'(=,;:])(?:~|(?:\.{1,2})?\/\S)/;
+
 const PATH_SLASHES = /\S*\/\S*\//;
+
 const HEX = /(?<![0-9a-z])(?:0x)?[0-9a-f]{12,}(?![0-9a-z])/i;
+
 const UUID = /[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/i;
+
 const IPV4 = /(?<![0-9.])(?:\d{1,3}\.){3}\d{1,3}(?![0-9])/;
+
 const IPV6_FULL = /(?<![0-9a-z:])(?:[0-9a-f]{1,4}:){7}[0-9a-f]{1,4}(?![0-9a-z:])/i;
+
 const IPV6_SHORT = /(?<![0-9a-z:])(?:[0-9a-f]{1,4}(?::[0-9a-f]{1,4}){0,6})?::(?:[0-9a-f]{1,4}(?::[0-9a-f]{1,4}){0,6})?(?![0-9a-z:])/gi;
+
 const LONG_RUN = /[A-Za-z0-9+/_-]{24,}/g;
+
 // Plain hyphenated words ("well-known-pre-existing-condition") are prose, not tokens. The same shape
 // covers rule ids such as 1password-service-account-token.
 const KEBAB = /^[a-z0-9]+(?:-[a-z]+){2,}$/;
@@ -237,9 +254,14 @@ const toBytes = (input) => (typeof input === 'string' ? Buffer.from(input, 'utf8
 function readLines(input, p) {
   const bytes = toBytes(input);
 
-  if (!bytes) { p.add('V2', 'encoding'); return null; }
+  if (!bytes) { p.add('V2', 'encoding');
 
-  if (bytes.length > LIMITS.bytes) { p.add('V1', 'size'); return null; }
+ return null; }
+
+  if (bytes.length > LIMITS.bytes) { p.add('V1', 'size');
+
+ return null; }
+
   let text;
 
   try {
@@ -252,7 +274,10 @@ function readLines(input, p) {
 
   if (text.charCodeAt(0) === 0xfeff) text = text.slice(1);
 
-  if (text.includes('\u0000')) { p.add('V2', 'encoding'); return null; }
+  if (text.includes('\u0000')) { p.add('V2', 'encoding');
+
+ return null; }
+
   text = text.replace(/\r\n/g, '\n');
   const lines = text.split('\n');
 
@@ -288,13 +313,21 @@ export function validateReport(input, { kind, rules, identity } = {}) {
 export function validateFreeText(input, { rules, identity, maxChars, multiline = false } = {}) {
   const p = collector();
 
-  if (typeof input !== 'string') { p.add('V2', 'encoding'); return { ok: false, problems: p.list }; }
+  if (typeof input !== 'string') { p.add('V2', 'encoding');
 
-  if (input.length > maxChars) { p.add('V1', 'size'); return { ok: false, problems: p.list }; }
+ return { ok: false, problems: p.list }; }
+
+  if (input.length > maxChars) { p.add('V1', 'size');
+
+ return { ok: false, problems: p.list }; }
+
   const text = input.replace(/\r\n/g, '\n');
   const lines = text === '' ? [] : text.split('\n');
 
-  if (!multiline && lines.length > 1) { p.add('V5', 'multiline'); return { ok: false, problems: p.list }; }
+  if (!multiline && lines.length > 1) { p.add('V5', 'multiline');
+
+ return { ok: false, problems: p.list }; }
+
   const ident = prepareIdentity(identity);
 
   lines.forEach((line, i) => {

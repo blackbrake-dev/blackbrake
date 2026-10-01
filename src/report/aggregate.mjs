@@ -6,6 +6,7 @@ import { CLASSES } from '../secrets/context.mjs';
 import { AUTO_SECTIONS } from './validate.mjs';
 
 export const SAFE_KEY = /^[a-z0-9][a-z0-9-]{1,60}$/;
+
 const MAX_COUNT = 999999;
 
 // `- <label> <key>: <n>` lines, sorted by key. `allowed` (a Set) narrows the keys further.
@@ -25,6 +26,7 @@ export function countLines(label, input, { allowed } = {}) {
 }
 
 const OS = new Set(['win32', 'darwin', 'linux']);
+
 const ARCH = new Set(['x64', 'arm64', 'ia32', 'arm']);
 
 // "About my setup": closed values only. An unknown os or arch becomes "other" (it is still a fact
@@ -34,16 +36,21 @@ export function setupLines(info) {
   let rejected = 0;
   const has = (k) => info && info[k] !== undefined;
   const add = (key, value) => lines.push(`- ${key}: ${value}`);
+
   const flag = (k, key, yes, no) => {
     if (!has(k)) return;
 
     if (typeof info[k] === 'boolean') add(key, info[k] ? yes : no);
     else rejected++;
   };
+
   const list = (k, key) => {
     if (!has(k)) return;
 
-    if (!Array.isArray(info[k])) { rejected++; return; }
+    if (!Array.isArray(info[k])) { rejected++;
+
+ return; }
+
     const good = info[k].filter((v) => typeof v === 'string' && SAFE_KEY.test(v));
     rejected += info[k].length - good.length;
     add(key, good.length ? good.join(', ') : 'none');
@@ -107,6 +114,7 @@ function problemLines(input) {
 export function aggregateReport(data, { selected = {}, ruleIds, kindIds } = {}) {
   const sections = {};
   let rejected = 0;
+
   const put = (box, parts) => {
     if (!selected[box]) return;
     const lines = parts.flatMap((p) => p.lines);

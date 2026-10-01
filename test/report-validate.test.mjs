@@ -12,14 +12,21 @@ import { buildReport, reportFileName } from '../src/report/build.mjs';
 import { HEADINGS, isReportFileName, LIMITS, TITLES, validateFreeText, validateReport } from '../src/report/validate.mjs';
 
 const FIXTURES = path.resolve(path.dirname(fileURLToPath(import.meta.url)), 'fixtures/report');
+
 const rules = loadRules();
+
 const identity = { home: 'C:/Users/zzuser-q7', user: 'zzuser-q7', host: 'zzhost-k9' };
+
 const opts = (extra = {}) => ({ kind: 'product', rules, identity, ...extra });
 
 const HEAD = ['# blackbrake report (product)', 'Version: 0.3.0, Date: 2026-09-30', '', '## Summary', 'The guard denied a harmless command.', '', '## What happened'];
+
 const doc = (...body) => [...HEAD, ...body].join('\n') + '\n';
+
 const check = (text, extra) => validateReport(text, opts(extra));
+
 const codes = (r) => r.problems.map((p) => p.code);
+
 const only = (text, code, extra) => {
   const r = check(text, extra);
   assert.equal(r.ok, false, `expected ${code}`);
@@ -27,6 +34,7 @@ const only = (text, code, extra) => {
 
   return r;
 };
+
 const valid = (text, extra) => {
   const r = check(text, extra);
   assert.equal(r.ok, true, JSON.stringify(r.problems));
@@ -249,8 +257,10 @@ function prng(seed) {
 
 test('property: 10000 random documents never validate with markup, ESC, bidi or 8 KiB', () => {
   const rand = prng(20260930);
+
   const pieces = ['the', 'guard', 'denied', 'a', 'command', 'x', '1', '2026-09-30', 'é', 'ñ', '¿', '-', '- ', '+ ', '= ', '# ', '## ', '1. ', '3) ', '_', 'a_b', '.', ',', ':', '(', ')', '"', '!', '?', '/', '%', ' ', '  ',
     '<', '>', '&', '[', ']', '`', '*', '~', '|', '@', '\\', '{', '}', '^', '$', '\u001b', '\u202e', '\u200b', '\u2066', '\ufeff', '\u0000', '\r', '\t', '\u{1f600}', '\u0430', 'http://', 'www.', 'mailto:', '&amp;', '<a href=x>', '![i](u)', '\n'];
+
   // oxlint-disable-next-line no-control-regex -- the control characters are the point of this check
   const forbidden = /[<>&[\]`*~|@\\{}^$\u0000-\u0009\u000b-\u001f\u007f-\u009f\u202a-\u202e\u2066-\u2069\u200b-\u200f\u061c\ufeff]/u;
   let accepted = 0;
@@ -280,6 +290,7 @@ test('buildReport lays out a report the validator accepts', () => {
     fields: { Summary: 'Guard blocked a harmless command', 'What happened': 'I ran a build.\r\nThe guard said no.  ', 'What you expected': '- it runs\n- no alert' },
     sections: { Setup: ['- blackbrake_version: 0.3.0', '- os: linux'] },
   });
+
   assert.equal(r.ok, true, JSON.stringify(r.problems));
   assert.ok(r.text.startsWith('# blackbrake report (product)\nVersion: 0.3.0, Date: 2026-09-30\n\n## Summary\nGuard blocked a harmless command\n'));
   assert.ok(r.text.endsWith('## Setup\n- blackbrake_version: 0.3.0\n- os: linux\n'));

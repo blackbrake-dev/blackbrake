@@ -10,13 +10,18 @@ import { loadRules } from '../src/secrets/engine.mjs';
 import { assertSafeMailto, buildMailto, MAX_URL, percentEncode, RECIPIENTS, subjectFor } from '../src/report/mailto.mjs';
 
 const FIXTURES = path.resolve(path.dirname(fileURLToPath(import.meta.url)), 'fixtures/report');
+
 const rules = loadRules();
+
 const identity = { home: 'C:/Users/zzuser-q7', user: 'zzuser-q7', host: 'zzhost-k9' };
+
 const fixture = (name) => fs.readFileSync(path.join(FIXTURES, name), 'utf8').replace(/\r\n/g, '\n');
+
 const args = (over = {}) => ({ kind: 'product', version: '0.3.0', text: fixture('valid-minimal.md'), rules, identity, ...over });
 
 // n short words wrapped at 20 per line, inside a minimal valid report.
 const words = (n) => Array.from({ length: Math.ceil(n / 20) }, (_, i) => 'ab '.repeat(Math.min(20, n - i * 20)).trim()).join('\n');
+
 const reportWith = (body) => `# blackbrake report (product)
 Version: 0.3.0, Date: 2026-09-30
 
