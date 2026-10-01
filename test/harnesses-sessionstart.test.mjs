@@ -61,6 +61,7 @@ test('Cursor sessionStart is normalized to the session id and the background fla
 test('setup subscribes Cursor to sessionStart (and re-running it rewrites the entries, with a backup)', () => {
   const home = tmp();
   const bb = path.join(home, '.blackbrake');
+
   const code = `const { AGENTS } = await import(${JSON.stringify(pathToFileURL(path.join(ROOT, 'src', 'guard', 'agents.mjs')).href)});
     AGENTS.cursor.install({ home: ${JSON.stringify(bb)}, hook: ${JSON.stringify(path.join(bb, 'app', 'src', 'guard', 'hook.mjs'))} });
     AGENTS.cursor.install({ home: ${JSON.stringify(bb)}, hook: ${JSON.stringify(path.join(bb, 'app', 'src', 'guard', 'hook.mjs'))} });`;
