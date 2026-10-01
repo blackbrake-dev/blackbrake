@@ -97,7 +97,7 @@ export function scanHarness(h, rules, { now = Date.now } = {}) {
       for (const f of scanText(rules, text)) {
         const key = crypto.createHash('sha256').update(f.secret).digest('hex');
         const cls = classifyOccurrence({ secret: f.secret, text, index: f.index, filePath: file });
-        const entry = found.get(key) ?? { key: key.slice(0, 12), ruleId: f.ruleId, shape: mask(f.secret), classes: new Set(), files: new Set() };
+        const entry = found.get(key) ?? { key: key.slice(0, 12), ruleId: f.ruleId, masked: mask(f.secret), classes: new Set(), files: new Set() };
         entry.classes.add(cls);
         entry.files.add(clean(path.relative(dir, file), 160));
         found.set(key, entry);
@@ -108,7 +108,8 @@ export function scanHarness(h, rules, { now = Date.now } = {}) {
   const findings = [...found.values()].map((e) => ({
     key: e.key,
     ruleId: e.ruleId,
-    shape: e.shape,
+    // oxlint-disable-next-line anti-slop/no-shape-in-symbol-names -- "shape" is the documented key of the audit finding schema (also in --json); renaming it would change the output.
+    shape: e.masked,
     classification: e.classes.has(CLASSES.real) ? CLASSES.real : [...e.classes][0],
     files: [...e.files].slice(0, 5),
     fileCount: e.files.size,

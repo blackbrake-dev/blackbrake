@@ -118,6 +118,7 @@ test('settings: the change is planned, backed up and applied; an invalid file is
 });
 
 test('the prompt for the agent never carries a secret value, and the agent gets one ASCII line', () => {
+  // oxlint-disable-next-line anti-slop/no-shape-in-symbol-names -- fixture of the public finding schema, which names this field "shape".
   const data = { secrets: [{ key: secretKey(GH), ruleId: 'github-pat', shape: 'ghp_••••(40)', classification: CLASSES.real, copies: 3, stores: [], inTranscripts: true, origin: 'pasted by you' }] };
   const advice = [{ id: 'rotate', level: 'critical', title: 'Rotate the 1 key that looks real', why: 'Sent to the provider.', steps: ['github-pat ghp_••••(40) (pasted by you) → github.com/settings/tokens'] }];
   const fixes = fixesFromAudit(advice, data);
@@ -131,6 +132,7 @@ test('the prompt for the agent never carries a secret value, and the agent gets 
 });
 
 test('scan results become fixes with the keys the clean-up needs', () => {
+  // oxlint-disable-next-line anti-slop/no-shape-in-symbol-names -- fixture of the public finding schema, which names this field "shape".
   const fixes = fixesFromScan([{ id: 'cursor', name: 'Cursor', findings: [{ key: 'abc123abc123', ruleId: 'github-pat', shape: 'ghp_••••(40)', classification: CLASSES.real, files: ['a.log'], fileCount: 1 }] }, { id: 'x', name: 'X', findings: [] }]);
   assert.equal(fixes.length, 1);
   assert.deepEqual(fixes[0].auto, { kind: 'scrub', source: 'cursor', keys: ['abc123abc123'] });
