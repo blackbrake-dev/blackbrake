@@ -1,106 +1,89 @@
-// Store management for local reports: read/validate paths, check expiry, list available reports.
-// F6.8 deliverable: tests drive V8 file path validation with lstat, O_NOFOLLOW, fstat ino/dev match.
+// F6.8, the report files (guard-design#6x §5.1, V8): generated names only, nothing through a link,
+// one name per file, size checked before reading, 30-day expiry, errors that are codes.
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { test } from 'node:test';
-import { readReportStore, listReports, reportIsExpired, validateReportPath } from '../src/report/store.mjs';
+import { deleteReport, listReports, readReport, REPORT_DAYS, reportDate, reportsDir, saveReport } from '../src/report/store.mjs';
 
 const tmp = () => fs.mkdtempSync(path.join(os.tmpdir(), 'bb-report-store-'));
 
-test('validateReportPath: accepts only absolute paths within home/.blackbrake/reports', () => {
+const TEXT = '# blackbrake report (product)\nVersion: 0.3.0, Date: 2026-10-01\n\n## Summary\nThe menu froze.\n';
+
+const NOW = new Date('2026-10-01T10:00:00Z');
+
+const fixed = (hex) => () => Buffer.from(hex, 'hex');
+
+const codeOf = (fn) => {
+  try { fn(); } catch (e) { return e.code; }
+
+  return null;
+};
+
+test('a saved report is read back byte for byte, under a generated name in ~/.blackbrake/reports', () => {
   const home = tmp();
-  const reportsDir = path.join(home, '.blackbrake', 'reports');
-  fs.mkdirSync(reportsDir, { recursive: true });
+  const name = saveReport('product', TEXT, { home, now: NOW, random: fixed('0123abcd') });
+  assert.equal(name, 'product-20261001T100000Z-0123abcd.md');
+  assert.equal(readReport(name, { home }).toString('utf8'), TEXT);
+  assert.deepEqual(fs.readdirSync(reportsDir(home)), [name]);
+  assert.equal(reportDate(name).toISOString(), '2026-10-01T10:00:00.000Z');
 
-  // Valid: within the directory (must exist)
-  const validPath = path.join(reportsDir, 'product-20261001T120000Z-abcd1234.md');
-  fs.writeFileSync(validPath, 'test content');
-  const result = validateReportPath(validPath, home);
-  assert.equal(result.ok, true, 'absolute path within reports dir accepted');
+  if (process.platform !== 'win32') assert.equal(fs.statSync(path.join(reportsDir(home), name)).mode & 0o777, 0o600);
+});
 
-  // Relative path rejected
-  const relPath = 'product-20261001T120000Z-abcd1234.md';
-  const rel = validateReportPath(relPath, home);
-  assert.equal(rel.ok, false, 'relative path rejected');
-  assert.equal(rel.reason, 'not-absolute');
+test('only generated names: no separators, drives, dot-dot, other names or other kinds', () => {
+  const home = tmp();
+  saveReport('product', TEXT, { home, now: NOW, random: fixed('0123abcd') });
 
-  // Escaping with .. rejected
-  const escaped = path.join(reportsDir, '..', 'secret.md');
-  const esc = validateReportPath(escaped, home);
-  assert.equal(esc.ok, false, 'path escaping rejected');
-  assert.equal(esc.reason, 'escapes-root');
-
-  // Symlink escaping rejected (only check lstat, not contents yet)
-  const linkPath = path.join(reportsDir, 'link.md');
-  const targetPath = path.join(tmp(), 'outside.md');
-  fs.writeFileSync(targetPath, 'test');
-  try {
-    fs.symlinkSync(targetPath, linkPath);
-    const link = validateReportPath(linkPath, home);
-    assert.equal(link.ok, false, 'symlink escaping rejected');
-  } catch (e) {
-    // Symlinks may not be available on all platforms; skip this case if so.
+  for (const name of ['../state.json', '..\\state.json', 'product-20261001T100000Z-0123abcd.md/../x', 'C:\\x.md', '/etc/passwd', 'product.md', 'other-20261001T100000Z-0123abcd.md', 'product-20261301T100000Z-0123abcd.md', 'PRODUCT-20261001T100000Z-0123abcd.md', '', null]) {
+    assert.equal(codeOf(() => readReport(name, { home })), 'bad-name', String(name));
+    assert.equal(codeOf(() => deleteReport(name, { home })), 'bad-name', String(name));
   }
 });
 
-test('validateReportPath with fstat: ino/dev match confirms file has not been swapped', () => {
+test('reading refuses a missing file, a folder, a second name (hard link) and a file too large', () => {
   const home = tmp();
-  const reportsDir = path.join(home, '.blackbrake', 'reports');
-  fs.mkdirSync(reportsDir, { recursive: true });
-
-  const reportPath = path.join(reportsDir, 'product-20261001T120000Z-abcd1234.md');
-  fs.writeFileSync(reportPath, 'test content');
-
-  // Open, stat, and validate that ino/dev match
-  const result = validateReportPath(reportPath, home);
-  assert.equal(result.ok, true, 'file with matching ino/dev accepted');
-  assert(Number.isInteger(result.ino), 'ino is an integer');
-  assert(Number.isInteger(result.dev), 'dev is an integer');
+  const dir = reportsDir(home);
+  assert.equal(codeOf(() => readReport('product-20261001T100000Z-0123abcd.md', { home })), 'not-found');
+  fs.mkdirSync(path.join(dir, 'product-20261001T100000Z-0000000a.md'), { recursive: true });
+  assert.equal(codeOf(() => readReport('product-20261001T100000Z-0000000a.md', { home })), 'not-regular');
+  const name = saveReport('product', TEXT, { home, now: NOW, random: fixed('0000000b') });
+  fs.linkSync(path.join(dir, name), path.join(home, 'elsewhere.md'));
+  assert.equal(codeOf(() => readReport(name, { home })), 'not-regular', 'a hard link is a second name for the file');
+  fs.writeFileSync(path.join(dir, 'product-20261001T100000Z-0000000c.md'), 'x'.repeat(20000));
+  assert.equal(codeOf(() => readReport('product-20261001T100000Z-0000000c.md', { home })), 'too-large');
 });
 
-test('reportIsExpired: checks 30-day expiry', () => {
-  const now = new Date();
-  const thirtyDaysAgo = new Date(now.getTime() - 30 * 24 * 60 * 60 * 1000);
-  const thirtyOneDaysAgo = new Date(now.getTime() - 31 * 24 * 60 * 60 * 1000);
+test('a reports folder that is a link is neither read nor written', (t) => {
+  const home = tmp();
+  const target = tmp();
 
-  assert.equal(reportIsExpired(thirtyDaysAgo, now), false, '30 days old is not expired');
-  assert.equal(reportIsExpired(thirtyOneDaysAgo, now), true, '31 days old is expired');
+  try { fs.symlinkSync(target, reportsDir(home), 'junction'); } catch {
+    t.skip('no link rights here');
+
+    return;
+  }
+
+  assert.equal(codeOf(() => saveReport('product', TEXT, { home, now: NOW })), 'linked');
+  assert.equal(codeOf(() => readReport('product-20261001T100000Z-0123abcd.md', { home })), 'linked');
+  assert.deepEqual(listReports({ home, now: NOW }), []);
+  assert.deepEqual(fs.readdirSync(target), [], 'nothing was written through it');
 });
 
-test('readReportStore: returns { ok, reports, problems } with list of valid reports', () => {
+test('list: newest first, other files ignored and untouched, expired reports deleted (only when asked)', () => {
   const home = tmp();
-  const reportsDir = path.join(home, '.blackbrake', 'reports');
-  fs.mkdirSync(reportsDir, { recursive: true });
-
-  // Create a valid report file
-  const validReport = path.join(reportsDir, 'product-20261001T120000Z-abcd1234.md');
-  fs.writeFileSync(validReport, 'test');
-
-  // Create an expired report (not cleaned up yet)
-  const expiredReport = path.join(reportsDir, 'security-19960101T000000Z-dcba4321.md');
-  fs.writeFileSync(expiredReport, 'old');
-
-  const result = readReportStore(home);
-  assert.equal(result.ok, true);
-  assert(Array.isArray(result.reports));
-  assert(result.reports.length >= 1, 'at least one report found');
-  assert(result.reports.some((r) => r.name === path.basename(validReport)), 'valid report included');
-  assert(Array.isArray(result.problems));
-});
-
-test('listReports: returns report names without paths or content', () => {
-  const home = tmp();
-  const reportsDir = path.join(home, '.blackbrake', 'reports');
-  fs.mkdirSync(reportsDir, { recursive: true });
-
-  fs.writeFileSync(path.join(reportsDir, 'product-20261001T120000Z-abcd1234.md'), 'test');
-  fs.writeFileSync(path.join(reportsDir, 'security-20261002T120000Z-dcba4321.md'), 'test');
-
-  const reports = listReports(home);
-  assert(Array.isArray(reports));
-  assert.equal(reports.length, 2);
-  assert(reports.every((r) => typeof r === 'string'));
-  assert(reports.every((r) => !r.includes(path.sep)), 'no path separators');
+  const dir = reportsDir(home);
+  const old = saveReport('product', TEXT, { home, now: new Date(NOW - (REPORT_DAYS + 1) * 864e5), random: fixed('00000001') });
+  const a = saveReport('security', TEXT, { home, now: new Date(NOW - 864e5), random: fixed('00000002') });
+  const b = saveReport('product', TEXT, { home, now: NOW, random: fixed('00000003') });
+  fs.writeFileSync(path.join(dir, 'notes.txt'), 'mine');
+  assert.deepEqual(listReports({ home, now: NOW, prune: false }).map((r) => r.name), [b, a], 'expired not listed');
+  assert.ok(fs.existsSync(path.join(dir, old)), 'prune: false deletes nothing');
+  assert.deepEqual(listReports({ home, now: NOW }).map((r) => [r.name, r.kind]), [[b, 'product'], [a, 'security']]);
+  assert.equal(fs.existsSync(path.join(dir, old)), false, 'expired one deleted');
+  assert.ok(fs.existsSync(path.join(dir, 'notes.txt')), 'a file blackbrake did not write is left alone');
+  deleteReport(a, { home });
+  assert.deepEqual(listReports({ home, now: NOW }).map((r) => r.name), [b]);
+  assert.deepEqual(listReports({ home: tmp(), now: NOW }), [], 'no folder yet');
 });

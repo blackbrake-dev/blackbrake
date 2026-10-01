@@ -65,6 +65,7 @@ function defaultIdentity() {
 
 function prepareIdentity(identity) {
   const id = identity ?? defaultIdentity();
+
   const pick = (v) => {
     const s = String(v ?? '').toLowerCase().replaceAll('\\', '/');
 

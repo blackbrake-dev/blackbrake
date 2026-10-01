@@ -188,12 +188,12 @@ test('the package does not import any network module', () => {
 });
 
 // guard starts processes: Claude Code's own CLI (setup, launch), `node --version`, the operating
-// system's notifier and a terminal window for the alerts. Each command is fixed (checked in
+// system's notifier, a terminal window for the alerts and, on a key press, the mail app for a report. Each command is fixed (checked in
 // test/watch.test.mjs); nothing goes through a shell.
-test('child processes: only from the guard installer, launcher, notifier and alerts window', () => {
+test('child processes: only from the guard installer, launcher, notifier, alerts window and report mail opener', () => {
   const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
   const files = ['bin', 'src', 'plugin'].flatMap((d) => listJs(path.join(root, d)));
-  const allowed = new Set(['src/guard/install.mjs', 'src/guard/cli.mjs', 'src/guard/watch.mjs', 'src/guard/window.mjs', 'src/guard/background.mjs', 'src/guard/autostart.mjs', 'src/guard/procs.mjs', 'src/fix/agent.mjs']);
+  const allowed = new Set(['src/guard/install.mjs', 'src/guard/cli.mjs', 'src/guard/watch.mjs', 'src/guard/window.mjs', 'src/guard/background.mjs', 'src/guard/autostart.mjs', 'src/guard/procs.mjs', 'src/fix/agent.mjs', 'src/report/open.mjs']);
 
   for (const f of files) {
     const text = fs.readFileSync(f, 'utf8');

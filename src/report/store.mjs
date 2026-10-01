@@ -1,115 +1,128 @@
-// Local report storage: read/validate/list without exposing paths or content.
-// V8: validate paths with lstat, O_NOFOLLOW, fstat ino/dev match before reading.
-// 30-day expiry; problem list never contains paths.
+// Where reports live: ~/.blackbrake/reports (guard-design#6x §5.1, V8). Only generated names are
+// accepted (no separators, drives, `..` or `~` can match), nothing is read or written through a link,
+// the size is checked before reading, and the file read is the same one that was checked (O_NOFOLLOW
+// where the system has it, then fstat of the same inode). A report expires 30 days after the time in
+// its name. Errors carry a short code, never a path or any content.
 import fs from 'node:fs';
 import path from 'node:path';
-import os from 'node:os';
+import { assertNoLinks } from '../guard/install.mjs';
+import { guardHome, writePrivate } from '../guard/state.mjs';
+import { reportFileName } from './build.mjs';
+import { isReportFileName, LIMITS } from './validate.mjs';
 
-const REPORTS_DIR = '.blackbrake/reports';
-const EXPIRY_DAYS = 30;
+export const REPORT_DAYS = 30;
 
-export function validateReportPath(filePath, home) {
-  // Must be absolute
-  if (!path.isAbsolute(filePath)) return { ok: false, reason: 'not-absolute' };
+// A report a person edited may have grown (CRLF, a BOM): read a little past the limit so the
+// validator, not the reader, is the one that says it is too large.
+const READ_LIMIT = LIMITS.bytes * 2;
 
-  // Within home/.blackbrake/reports lexically
-  const reportsDir = path.join(home, REPORTS_DIR);
-  const normalized = path.normalize(filePath);
-  const reportsNorm = path.normalize(reportsDir);
-
-  // Check if the path is within reports dir (add sep to avoid prefix matching issues)
-  const isInReportsDir = normalized === reportsNorm || (normalized.startsWith(reportsNorm) && normalized[reportsNorm.length] === path.sep);
-
-  if (!isInReportsDir) {
-    return { ok: false, reason: 'escapes-root' };
+export class ReportError extends Error {
+  constructor(code) {
+    super(`report: ${code}`);
+    this.code = code;
   }
+}
 
-  // Check for .. or other escapes in the relative path
-  const rel = path.relative(reportsDir, normalized);
-  if (rel.startsWith('..') || path.isAbsolute(rel)) {
-    return { ok: false, reason: 'escapes-root' };
-  }
+export const reportsDir = (home = guardHome()) => path.join(home, 'reports');
 
-  // Stat the path (lstat = no symlink following)
+const fileOf = (name, home) => {
+  if (!isReportFileName(name)) throw new ReportError('bad-name');
+  const file = path.join(reportsDir(home), name);
+
+  try { assertNoLinks(file); } catch { throw new ReportError('linked'); }
+
+  return file;
+};
+
+// When a report was made, from its name (UTC).
+export function reportDate(name) {
+  const m = /^(?:product|security)-(\d{4})(\d{2})(\d{2})T(\d{2})(\d{2})(\d{2})Z-/.exec(name);
+
+  return m ? new Date(Date.UTC(+m[1], +m[2] - 1, +m[3], +m[4], +m[5], +m[6])) : null;
+}
+
+export const reportKind = (name) => (isReportFileName(name) ? name.split('-')[0] : null);
+
+// Writes a validated report under a fresh generated name and returns the name.
+export function saveReport(kind, text, { home = guardHome(), now = new Date(), random } = {}) {
+  const name = reportFileName(kind, now, random);
+  const file = fileOf(name, home);
+
+  if (fs.existsSync(file)) throw new ReportError('exists');
+  writePrivate(file, text);
+
+  return name;
+}
+
+// The bytes of a report (the validator decides whether they are a valid report).
+export function readReport(name, { home = guardHome() } = {}) {
+  const file = fileOf(name, home);
+  let st;
+
+  try { st = fs.lstatSync(file); } catch { throw new ReportError('not-found'); }
+
+  if (!st.isFile() || st.nlink !== 1) throw new ReportError('not-regular');
+
+  if (st.size > READ_LIMIT) throw new ReportError('too-large');
+  let fd;
+
+  try { fd = fs.openSync(file, fs.constants.O_RDONLY | (fs.constants.O_NOFOLLOW ?? 0)); } catch { throw new ReportError('not-readable'); }
+
   try {
-    const stats = fs.lstatSync(normalized);
+    const now = fs.fstatSync(fd);
 
-    // Must be a regular file
-    if (!stats.isFile()) return { ok: false, reason: 'not-file' };
+    if (!now.isFile() || now.ino !== st.ino || now.dev !== st.dev || now.size > READ_LIMIT) throw new ReportError('changed');
+    const buf = Buffer.alloc(now.size);
+    let read = 0;
 
-    // Open with O_NOFOLLOW to confirm no swap (POSIX only; Windows respects lstat)
-    // For now, we fstat to verify ino/dev match
-    try {
-      const fd = fs.openSync(normalized, 'r');
-      const fstats = fs.fstatSync(fd);
-      fs.closeSync(fd);
+    while (read < now.size) {
+      const n = fs.readSync(fd, buf, read, now.size - read, read);
 
-      // Verify inode and device haven't changed (guards against TOCTOU)
-      if (fstats.ino !== stats.ino || fstats.dev !== stats.dev) {
-        return { ok: false, reason: 'file-swapped' };
-      }
-
-      return { ok: true, ino: stats.ino, dev: stats.dev };
-    } catch (e) {
-      return { ok: false, reason: 'open-failed', error: e.message };
+      if (!n) break;
+      read += n;
     }
-  } catch (e) {
-    return { ok: false, reason: 'stat-failed', error: e.message };
+
+    return buf.subarray(0, read);
+  } finally {
+    fs.closeSync(fd);
   }
 }
 
-export function reportIsExpired(fileDate, now = new Date()) {
-  const ageMs = now.getTime() - new Date(fileDate).getTime();
-  const ageDays = ageMs / (1000 * 60 * 60 * 24);
+export function deleteReport(name, { home = guardHome() } = {}) {
+  const file = fileOf(name, home);
+  let st;
 
-  return ageDays > EXPIRY_DAYS;
+  try { st = fs.lstatSync(file); } catch { throw new ReportError('not-found'); }
+
+  if (!st.isFile()) throw new ReportError('not-regular');
+  fs.rmSync(file);
 }
 
-export function readReportStore(home) {
-  const reportsDir = path.join(home, REPORTS_DIR);
-  const reports = [];
-  const problems = [];
+// Reports newest first, as { name, kind, date }. Anything else in the folder is left alone and not
+// listed. Expired reports are deleted on the way (`prune: false` only lists).
+export function listReports({ home = guardHome(), now = new Date(), prune = true } = {}) {
+  let names = [];
 
-  // Create directory if missing
   try {
-    fs.mkdirSync(reportsDir, { recursive: true });
-  } catch (e) {
-    problems.push({ code: 'mkdir-failed', error: e.message });
-    return { ok: false, reports, problems };
-  }
+    assertNoLinks(reportsDir(home));
+    names = fs.readdirSync(reportsDir(home));
+  } catch { return []; }
 
-  // List and validate each report
-  try {
-    const entries = fs.readdirSync(reportsDir, { withFileTypes: true });
+  const out = [];
 
-    for (const entry of entries) {
-      if (!entry.isFile()) continue;
+  for (const name of names.filter(isReportFileName)) {
+    const date = reportDate(name);
 
-      const filePath = path.join(reportsDir, entry.name);
-      const validated = validateReportPath(filePath, home);
-
-      if (!validated.ok) {
-        problems.push({ code: validated.reason, file: entry.name });
-        continue;
+    if (now - date > REPORT_DAYS * 864e5) {
+      if (prune) {
+        try { deleteReport(name, { home }); } catch { /* listed again next time */ }
       }
 
-      // Check expiry
-      const stats = fs.lstatSync(filePath);
-      if (reportIsExpired(stats.mtime)) {
-        problems.push({ code: 'expired', file: entry.name });
-        continue;
-      }
-
-      reports.push({ name: entry.name, size: stats.size, mtime: stats.mtime });
+      continue;
     }
-  } catch (e) {
-    problems.push({ code: 'list-failed', error: e.message });
+
+    out.push({ name, kind: reportKind(name), date });
   }
 
-  return { ok: reports.length > 0 || problems.length === 0, reports, problems };
-}
-
-export function listReports(home) {
-  const store = readReportStore(home);
-  return store.reports.map((r) => r.name);
+  return out.sort((a, b) => b.date - a.date || (a.name < b.name ? 1 : -1));
 }

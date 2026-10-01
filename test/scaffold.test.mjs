@@ -117,15 +117,16 @@ test('help lines come from the registry: usage and text for each command', () =>
   assert.match(run(['help']).stdout, /blackbrake pause/, 'the in-menu help screen reads the registry too');
 });
 
-test('stubs answer "not available yet" in English and Spanish and change no state', () => {
+test('without a terminal, the feature commands that write say so in English and Spanish and change no state', () => {
   const home = tmp();
   run(['--version'], { home });
   const baseline = tree(home);
 
   for (const [args, en, es] of [
-    [['report'], /Reports are not available yet/, /Los informes todavía no están disponibles/],
-    [['report', 'send', 'x.md'], /Reports are not available yet/, /Los informes todavía no están disponibles/],
-    [['report', 'security'], /Reports are not available yet/, /Los informes todavía no están disponibles/],
+    [['report'], /Reports are prepared in an interactive terminal/, /Los informes se preparan en un terminal interactivo/],
+    [['report', 'send', 'product-20261001T100000Z-0123abcd.md'], /Reports are prepared in an interactive terminal/, /Los informes se preparan en un terminal interactivo/],
+    [['report', 'security'], /Reports are prepared in an interactive terminal/, /Los informes se preparan en un terminal interactivo/],
+    [['pause'], /Nothing changed: this must be confirmed in an interactive terminal/, /No se ha cambiado nada: hay que confirmarlo en una terminal interactiva/],
   ]) {
     const a = run(args, { home });
     assert.equal(a.status, 1, args.join(' '));
@@ -143,7 +144,7 @@ test('an unknown command is still refused, and built-ins still win over the regi
   assert.equal(run(['uninstall'], { input: 'y\n' }).status, 1, 'uninstall is still the built-in command: without a terminal it changes nothing');
 });
 
-test('menu rows run their stub without touching state', async () => {
+test('menu rows, run without a terminal, say so and touch no state', async () => {
   const lines = [];
   const ctx = { p, opts: {}, print: (l) => lines.push(...l), state: {} };
 
@@ -155,7 +156,7 @@ test('menu rows run their stub without touching state', async () => {
   }
 
   assert.ok(lines.every((l) => l === `${l}`));
-  assert.match(strip(lines.join('\n')), /not available yet/);
+  assert.match(strip(lines.join('\n')), /Reports are prepared in an interactive terminal/);
 });
 
 test('SHELL_TAMPER: the agent cannot run pause, resume or report; GUARD_ENTRIES knows the new files', () => {
