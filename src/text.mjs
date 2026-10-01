@@ -44,3 +44,22 @@ export const clean = (value, max = 300) => {
 
   return s.length > max ? `${s.slice(0, max - 1)}…` : s;
 };
+
+// The alphabet of a report (guard-design#6x §5.4, rule V4) by code point: space, printable ASCII
+// without the markup characters, Latin-1 letters (no × or ÷), ¿ ¡ ª º, and Latin Extended-A. Line
+// breaks are the caller's business. `#` and `_` are allowed here and restricted by position in the
+// validator. Everything else (controls, bidi, zero width, tags, emoji, Cyrillic or Greek look-alikes,
+// lone combining marks) is outside by construction, not by a list of bad characters.
+const REPORT_MARKUP = new Set([...'<>[]{}\\`*~|&@^$'].map((c) => c.codePointAt(0)));
+
+export function isSafeReportChar(cp) {
+  if (cp === 0x20) return true;
+
+  if (cp > 0x20 && cp < 0x7f) return !REPORT_MARKUP.has(cp);
+
+  if (cp === 0xa1 || cp === 0xaa || cp === 0xba || cp === 0xbf) return true;
+
+  if (cp >= 0xc0 && cp <= 0xff) return cp !== 0xd7 && cp !== 0xf7;
+
+  return cp >= 0x100 && cp <= 0x17f;
+}
