@@ -150,6 +150,42 @@ test('tamper protection denies in both modes', () => {
   assert.equal(tamper('Bash', { command: 'ls ~/.blackbrake && cat ~/.blackbrake/state.json' }, { home: HOME }), null, 'reading guard\'s folder is fine');
   assert.ok(tamper('Bash', { command: 'echo {} > ~/.blackbrake/state.json' }, { home: HOME }), 'writing to it is not');
   assert.equal(tamper('Edit', { file_path: path.join(HOME, '.claude', 'settings.json'), old_string: '"blackbrake@blackbrake": true', new_string: '"blackbrake@blackbrake": true, "x@y": true' } , { home: HOME }), null);
+
+  // C1: Shell tampering with flags — allowlist enforced for non-read commands
+  const c1Deny = [
+    'blackbrake --json pause',
+    'env -u CLAUDECODE blackbrake pause',
+    'npx blackbrake@x pause',
+    'npx -y blackbrake@0.3.0 --json resume',
+    'node bin/blackbrake.mjs -q stop',
+    'bash -c "blackbrake pause"',
+    'sudo -E blackbrake.cmd pause',
+    'blackbrake $x',
+    'FOO=1 blackbrake --json pause',
+    'xargs blackbrake pause',
+    'echo hi | blackbrake -j pause'
+  ];
+
+  for (const cmd of c1Deny) {
+    assert.ok(tamper('Bash', { command: cmd }, { home: HOME }), `C1: should deny "${cmd}"`);
+  }
+
+  const c1Allow = [
+    'blackbrake',
+    'blackbrake status',
+    'blackbrake --json status --details',
+    'npx blackbrake audit --json',
+    'node bin/blackbrake.mjs',
+    'blackbrake help',
+    'git -C blackbrake commit -- a',
+    'cd blackbrake && npm test',
+    'ls blackbrake',
+    'npm test --prefix blackbrake'
+  ];
+
+  for (const cmd of c1Allow) {
+    assert.equal(tamper('Bash', { command: cmd }, { home: HOME }), null, `C1: should allow "${cmd}"`);
+  }
 });
 
 test('secret printed by a command: protect hides it from the model, observe warns', () => {

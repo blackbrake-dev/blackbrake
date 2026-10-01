@@ -656,6 +656,42 @@ export const lowersThroughWrapper = (raw) => {
   return /\bblackbrake\b/i.test(cmd) && EXPANSION.test(raw) && LOWERING_WORD.test(cmd);
 };
 
+
+// Allowlist: if a command executes blackbrake, only read-only subcommands (status, log, audit, etc.)
+// are allowed. Everything else is rejected, including variables. This closes the bypass where
+// `blackbrake --json pause` (flags between command and subcommand) was not detected.
+const BLACKBRAKE_TOKEN = /^(?:.*[/])?blackbrake(?:@\S*)?(?:\.(?:mjs|cmd|ps1|exe))?$/i;
+
+const BLACKBRAKE_READ_SUBCOMMANDS = new Set(['status', 'log', 'agents', 'scan', 'audit', 'help']);
+
+const LAUNCHERS = new Set(['env', 'sudo', 'doas', 'nohup', 'time', 'command', 'exec', 'builtin', 'nice', 'ionice', 'timeout', 'stdbuf', 'xargs', 'setsid', 'chroot', 'cmd', 'call', 'start', 'bash', 'sh', 'zsh', 'dash', 'fish', 'ksh', 'pwsh', 'powershell', 'node', 'bun', 'deno', 'npx', 'bunx', 'pnpm', 'pnpx', 'npm', 'yarn', 'volta', 'winpty', 'script', 'expect', 'unbuffer', 'watch', 'then', 'do', 'else', 'if', 'while', 'until', 'start-process', 'invoke-command', 'icm']);
+
+function blackbrakeRunsNonRead(view) {
+  for (const part of String(view).split(/\|\||&&|[|;&\n(){}`]|\$\(/)) {
+    const words = part.trim().split(/\s+/).filter(Boolean);
+
+    let i = 0;
+
+    while (i < words.length && (/^[\w.-]+=/.test(words[i]) || words[i] === '!')) i++;
+
+    const first = (words[i] ?? '').toLowerCase().replace(/\.(exe|cmd|bat|ps1)$/, '').split(/[/]/).pop();
+
+    if (!LAUNCHERS.has(first) && !BLACKBRAKE_TOKEN.test(words[i] ?? '')) continue;
+
+    const at = words.findIndex((x, j) => j >= i && BLACKBRAKE_TOKEN.test(x));
+
+    if (at < 0) continue;
+
+    let j = at + 1;
+
+    while (j < words.length && words[j].startsWith('-')) j++;
+
+    if (j < words.length && !BLACKBRAKE_READ_SUBCOMMANDS.has(words[j].toLowerCase())) return true;
+  }
+
+  return false;
+}
+
 const SHELL_TAMPER = /\bBLACKBRAKE_\w+\s*=|\b(pkill|killall|Stop-Process|taskkill)\b[^\n]{0,200}\bblackbrake\b|\blaunchctl\s+bootout\s+(gui|user)\/\d+\s*(?:$|[;&|])|\bblackbrake(\.mjs|\.cmd|\.ps1|\.exe)?["']?\s+(mode|uninstall|setup|background|window|permissions|lang|fix|pause|resume|stop|report)\b|\bwatch-main\.mjs|\b(node|bun|deno)(\.exe)?\b[^\n]*guard[\\/](cli|state|hook|policy|install)\.mjs|\bimport\(?[^\n]*guard[\\/](state|install)\.mjs|\bBLACKBRAKE_HOME\b|disableAllHooks|\bclaude(\.cmd|\.exe)?["']?\s+plugins?\s+(disable|uninstall|remove|rm)\b|\bplugins?\s+marketplace\s+(remove|rm)\b[^\n]*blackbrake/i;
 
 
@@ -680,7 +716,7 @@ export function tamper(tool, input = {}, ctx = {}, commandViews = null) {
     const views = [...new Set((commandViews ?? shellViews(cmd)).flatMap((v) => [v, unquote(v), asRun(v)]))];
     const readOnly = readOnlyCommand(cmd);
 
-    if (views.some((v) => SHELL_TAMPER.test(v)) || lowersThroughWrapper(cmd) || (views.some((v) => GUARD_IN_SHELL.test(v)) && !readOnly)) return t('it would change or switch off blackbrake');
+    if (views.some((v) => SHELL_TAMPER.test(v)) || blackbrakeRunsNonRead(cmd) || lowersThroughWrapper(cmd) || (views.some((v) => GUARD_IN_SHELL.test(v)) && !readOnly)) return t('it would change or switch off blackbrake');
 
     if ((views.some((v) => CLAUDE_CONFIG_IN_SHELL.test(v)) || (input.files ?? []).some((f) => protectedTarget(f, ctx))) && !readOnly) return t('it changes a coding agent\'s configuration through the shell, where the change cannot be checked; use the Edit tool instead');
 
