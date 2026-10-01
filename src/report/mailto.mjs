@@ -7,6 +7,7 @@
 // there is no window between "reviewed" and "sent". If it does not fit, only the subject goes in and
 // the caller says to copy the text or attach the file by hand.
 import { assertKind, META_LINE, validateReport } from './validate.mjs';
+import { isText } from '../kinds.mjs';
 
 export const RECIPIENTS = Object.freeze({ product: 'hello@blackbrake.dev', security: 'security@blackbrake.dev' });
 
@@ -41,7 +42,7 @@ export function subjectFor(kind, version) {
 export function assertSafeMailto(url) {
   const fail = (why) => { throw new Error(`unsafe mailto: ${why}`); };
 
-  if (typeof url !== 'string' || url.length > MAX_URL) fail('size or type');
+  if (!isText(url) || url.length > MAX_URL) fail('size or type');
   const m = /^mailto:(hello@blackbrake\.dev|security@blackbrake\.dev)\?subject=([A-Za-z0-9%._~-]+)(?:&body=([A-Za-z0-9%._~-]*))?$/.exec(url);
 
   if (!m) fail('shape');

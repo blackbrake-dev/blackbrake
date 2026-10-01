@@ -4,6 +4,7 @@ import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { goodbyeScene, progressBar, report, spinner, transition } from '../src/ui/motion.mjs';
 import { box, bubble, createPainter, mascot, mascotMedium, MEDIUM_WIDTH, POSES, strip, truncate, width } from '../src/ui/term.mjs';
+import { isFunction } from '../src/kinds.mjs';
 
 const sink = (isTTY = true) => ({ isTTY, rows: 20, columns: 60, text: '', write(s) { this.text += s; } });
 
@@ -73,7 +74,7 @@ test('main menu: the name shines now and then; the chosen row wears Brakey; the 
   assert.match(rows[0], /▐••▌ 1 {2}Live session/, 'Brakey in its orange box points at the chosen row, with its number');
   assert.match(rows[1], /· {2}2 {2}Audit/);
   assert.match(rows[0], /○ ACTIVE/, 'the badge dot changes with the beat');
-  assert.equal(typeof headerLife(p, '1.0.0', { out: sink(false) }), 'function', 'no terminal: nothing starts');
+  assert.ok(isFunction(headerLife(p, '1.0.0', { out: sink(false) })), 'no terminal: nothing starts');
 });
 
 test('transitions and scenes: a terminal gets a wipe then a clean screen; a pipe gets nothing', async () => {

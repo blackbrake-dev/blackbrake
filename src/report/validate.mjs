@@ -8,6 +8,7 @@
 import os from 'node:os';
 import { loadRules, scanText } from '../secrets/engine.mjs';
 import { isSafeReportChar } from '../text.mjs';
+import { isText } from '../kinds.mjs';
 
 export const LIMITS = Object.freeze({ bytes: 8192, lines: 120, lineChars: 200, problems: 40 });
 
@@ -42,7 +43,7 @@ export function assertKind(kind) {
 
 // V8 (name part): the only file name a command accepts. No separators, drives, `..` or `~` can match.
 export function isReportFileName(name) {
-  const m = typeof name === 'string' ? FILE_NAME.exec(name) : null;
+  const m = isText(name) ? FILE_NAME.exec(name) : null;
 
   if (!m) return false;
   const [, , , month, day, hour, minute, second] = m;
@@ -64,9 +65,11 @@ function defaultIdentity() {
 
 function prepareIdentity(identity) {
   const id = identity ?? defaultIdentity();
-  const pick = (v) => { const s = String(v ?? '').toLowerCase().replaceAll('\\', '/');
+  const pick = (v) => {
+    const s = String(v ?? '').toLowerCase().replaceAll('\\', '/');
 
- return s.length >= 3 ? s : null; };
+    return s.length >= 3 ? s : null;
+  };
 
   return { home: pick(id.home), user: pick(id.user), host: pick(id.host) };
 }
@@ -248,7 +251,7 @@ function checkStructure(lines, kind, p) {
   });
 }
 
-const toBytes = (input) => (typeof input === 'string' ? Buffer.from(input, 'utf8') : input instanceof Uint8Array ? input : null);
+const toBytes = (input) => (isText(input) ? Buffer.from(input, 'utf8') : input instanceof Uint8Array ? input : null);
 
 // Decode (V2) and split into lines. A BOM and CRLF are accepted (Notepad adds both) and normalized.
 function readLines(input, p) {
@@ -313,7 +316,7 @@ export function validateReport(input, { kind, rules, identity } = {}) {
 export function validateFreeText(input, { rules, identity, maxChars, multiline = false } = {}) {
   const p = collector();
 
-  if (typeof input !== 'string') { p.add('V2', 'encoding');
+  if (!isText(input)) { p.add('V2', 'encoding');
 
  return { ok: false, problems: p.list }; }
 

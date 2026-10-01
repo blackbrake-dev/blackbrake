@@ -8,8 +8,9 @@ import { buildAdvice } from '../src/advice.mjs';
 import { ADVISORIES, olderThan, openAdvisories } from '../src/advisories.mjs';
 import { inventory } from '../src/load/inventory.mjs';
 import { createVersionAnalyzer } from '../src/version.mjs';
+import { isText } from '../src/kinds.mjs';
 
-const put = (file, text) => { fs.mkdirSync(path.dirname(file), { recursive: true }); fs.writeFileSync(file, typeof text === 'string' ? text : JSON.stringify(text)); };
+const put = (file, text) => { fs.mkdirSync(path.dirname(file), { recursive: true }); fs.writeFileSync(file, isText(text) ? text : JSON.stringify(text)); };
 
 function makeHome() {
   const home = fs.mkdtempSync(path.join(os.tmpdir(), 'blackbrake-posture-'));
@@ -60,7 +61,7 @@ test('disk-derived names are cleaned and network paths are never read', () => {
   const strings = [];
   JSON.stringify(inv, (k, v) => { strings.push(k);
 
- if (typeof v === 'string') strings.push(v);
+ if (isText(v)) strings.push(v);
 
  return v; });
   assert.ok(strings.some((s) => s.includes('fake')), 'the skill was read');

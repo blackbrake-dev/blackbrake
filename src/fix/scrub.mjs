@@ -18,6 +18,7 @@ import { guardHome } from '../guard/state.mjs';
 import { scanText } from '../secrets/engine.mjs';
 import { mask } from '../secrets/audit.mjs';
 import { isLocalPath } from '../text.mjs';
+import { isText } from '../kinds.mjs';
 
 export const KEEP_DAYS = 7;
 
@@ -154,7 +155,7 @@ export function undoScrub(id, home = guardHome()) {
   // A file is put back only if it is still exactly what the clean-up wrote: otherwise it changed
   // since (new transcript lines) or the index was edited, and restoring would overwrite that.
   for (const { file, copy, after } of index.files) {
-    if (!/^\d{5}\.bak$/.test(copy) || typeof file !== 'string' || !path.isAbsolute(file) || !isLocalPath(file) || !/^[0-9a-f]{64}$/.test(after ?? '')) continue;
+    if (!/^\d{5}\.bak$/.test(copy) || !isText(file) || !path.isAbsolute(file) || !isLocalPath(file) || !/^[0-9a-f]{64}$/.test(after ?? '')) continue;
     const tmp = `${file}.${crypto.randomBytes(6).toString('hex')}.tmp`;
 
     try {

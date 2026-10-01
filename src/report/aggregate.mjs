@@ -4,6 +4,7 @@
 // not leave the machine. Nothing here is added unless its box was ticked.
 import { CLASSES } from '../secrets/context.mjs';
 import { AUTO_SECTIONS } from './validate.mjs';
+import { isFlag, isObject, isText } from '../kinds.mjs';
 
 export const SAFE_KEY = /^[a-z0-9][a-z0-9-]{1,60}$/;
 
@@ -11,7 +12,7 @@ const MAX_COUNT = 999999;
 
 // `- <label> <key>: <n>` lines, sorted by key. `allowed` (a Set) narrows the keys further.
 export function countLines(label, input, { allowed } = {}) {
-  if (!input || typeof input !== 'object') return { lines: [], rejected: 0 };
+  if (!isObject(input)) return { lines: [], rejected: 0 };
   const kept = [];
   let rejected = 0;
 
@@ -40,7 +41,7 @@ export function setupLines(info) {
   const flag = (k, key, yes, no) => {
     if (!has(k)) return;
 
-    if (typeof info[k] === 'boolean') add(key, info[k] ? yes : no);
+    if (isFlag(info[k])) add(key, info[k] ? yes : no);
     else rejected++;
   };
 
@@ -51,7 +52,7 @@ export function setupLines(info) {
 
  return; }
 
-    const good = info[k].filter((v) => typeof v === 'string' && SAFE_KEY.test(v));
+    const good = info[k].filter((v) => isText(v) && SAFE_KEY.test(v));
     rejected += info[k].length - good.length;
     add(key, good.length ? good.join(', ') : 'none');
   };
