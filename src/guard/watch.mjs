@@ -11,6 +11,7 @@ import { clean } from '../text.mjs';
 import { defaultRoot } from '../transcripts.mjs';
 import { mini, motionAllowed, padEnd, screen } from '../ui/term.mjs';
 import { getInventorySnapshot, getSpendSecret, setInventorySnapshot, setSpendBaseline } from './spend-state.mjs';
+import { isPaused } from './pause.mjs';
 import { appendLog, getSetting, guardHome, logDir, writePrivate } from './state.mjs';
 import { HARNESSES } from './registry.mjs';
 import { systemProgram } from './window.mjs';
@@ -428,7 +429,19 @@ export async function watch(p, { home = guardHome(), out = process.stdout, inter
   }
 
   await new Promise((resolve) => {
-    const timer = setInterval(tick, intervalMs);
+    // Paused ("blackbrake pause"): the window says why and closes itself.
+    const timer = setInterval(() => {
+      if (!isPaused(home)) {
+        tick();
+
+        return;
+      }
+
+      live.out.write(`  ${p.amber(t('blackbrake is paused: nothing is being watched. This window closes now; "blackbrake resume" turns it back on.'))}
+`);
+      stop();
+    }, intervalMs);
+
     const input = process.stdin;
     const useKeys = keys && input.isTTY;
 

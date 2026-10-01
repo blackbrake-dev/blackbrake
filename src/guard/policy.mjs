@@ -631,10 +631,12 @@ export function readOnlyCommand(command) {
 // one (script, expect, unbuffer, winpty, socat, a pty module, tmux/screen send-keys) and feed the
 // confirmation word, or hide the program name behind a variable. So: a pseudo-terminal wrapper or a
 // variable/expansion on the same line as a lowering word (mode observe, uninstall, background off,
-// window off, permissions) is refused. Not airtight against arbitrary code (the README says so).
+// window off, permissions, pause) is refused. Not airtight against arbitrary code (the README says so).
+// Known false positive, accepted (guard-design §6x W2-3): `cmd /c "echo %X% & pause"` or
+// `docker pause $ID` is refused too; cmd's pause would hang the agent's keyboardless shell anyway.
 const PTY_WRAPPER = /\b(script|expect|unbuffer|winpty|socat|scriptreplay|conpty|ptyprocess|node-pty|pty\.spawn|pexpect)\b|\b(tmux|screen)\b[^\n]*(send-keys|-X\s+stuff)/i;
 
-const LOWERING = /\b(mode\s+observe|observar|uninstall|background\s+off|window\s+off|permissions|--purge)\b/i;
+const LOWERING = /\b(mode\s+observe|observar|uninstall|background\s+off|window\s+off|permissions|--purge|pause)\b/i;
 
 const EXPANSION = /\$\{?\w+\}?|%\w+%|\$env:\w+|\$\(|`|\beval\b|\biex\b|Invoke-Expression|&\s*\(/i;
 
@@ -643,7 +645,7 @@ export const unquote = (cmd) => String(cmd).replace(/["'^]/g, '');
 
 // blackbrake named anywhere, plus an expansion and a lowering word anywhere (not only adjacent):
 // `blackbrake $(echo mode) observe`.
-const LOWERING_WORD = /\b(observe|observar|uninstall|purge|permissions)\b|\bbackground\b[^\n]*\boff\b|\bwindow\b[^\n]*\boff\b/i;
+const LOWERING_WORD = /\b(observe|observar|uninstall|purge|permissions|pause|pausar)\b|\bbackground\b[^\n]*\boff\b|\bwindow\b[^\n]*\boff\b/i;
 
 export const lowersThroughWrapper = (raw) => {
   const cmd = unquote(raw);
@@ -667,7 +669,11 @@ const BLACKBRAKE_READ_SUBCOMMANDS = new Set(['status', 'log', 'agents', 'scan', 
 const LAUNCHERS = new Set(['env', 'sudo', 'doas', 'nohup', 'time', 'command', 'exec', 'builtin', 'nice', 'ionice', 'timeout', 'stdbuf', 'xargs', 'setsid', 'chroot', 'cmd', 'call', 'start', 'bash', 'sh', 'zsh', 'dash', 'fish', 'ksh', 'pwsh', 'powershell', 'node', 'bun', 'deno', 'npx', 'bunx', 'pnpm', 'pnpx', 'npm', 'yarn', 'volta', 'winpty', 'script', 'expect', 'unbuffer', 'watch', 'then', 'do', 'else', 'if', 'while', 'until', 'start-process', 'invoke-command', 'icm']);
 
 function blackbrakeRunsNonRead(view) {
-  for (const part of String(view).split(/\|\||&&|[|;&\n(){}`]|\$\(/)) {
+  // Parts and the separator after each: [part, sep, part, sep, …, part].
+  const pieces = String(view).split(/(\|\||&&|[|;&\n(){}`]|\$\()/);
+
+  for (let k = 0; k < pieces.length; k += 2) {
+    const part = pieces[k];
     const words = part.trim().split(/\s+/).filter(Boolean);
 
     let i = 0;
@@ -687,6 +693,9 @@ function blackbrakeRunsNonRead(view) {
     while (j < words.length && words[j].startsWith('-')) j++;
 
     if (j < words.length && !BLACKBRAKE_READ_SUBCOMMANDS.has(words[j].toLowerCase())) return true;
+
+    // No subcommand in sight because an expansion builds it (`blackbrake $(echo pau)se`): unknown, refused.
+    if (j === words.length && /^(\$\(|`|\(|\{)$/.test(pieces[k + 1] ?? '')) return true;
   }
 
   return false;

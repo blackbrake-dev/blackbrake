@@ -11,6 +11,7 @@ import { loadRules } from '../secrets/engine.mjs';
 import { ADAPTERS, renderError } from './harnesses.mjs';
 import { decide, isSensitivePath, linkedPlaces, loginItemFile, protectedTarget, shellViews, withinBudget } from './policy.mjs';
 import { isLocalPath, localFileStat } from '../text.mjs';
+import { isPaused } from './pause.mjs';
 import { appendLog, getMode, getSavedLang, getSession, setSession, trustedHome } from './state.mjs';
 import { maybeOpenWindow } from './window.mjs';
 
@@ -245,6 +246,24 @@ async function main() {
     const canonical = Object.hasOwn(adapter.events, nativeEvent) ? adapter.events[nativeEvent] : null;
 
     if (!canonical) throw new TypeError('Unknown hook event');
+
+    // Paused by the user ("blackbrake pause"): a neutral answer in the agent's own format, nothing
+    // analysed, blocked or recorded beyond one "paused" line per session. SessionStart says so.
+    if (isPaused(home)) {
+      const id = raw.session_id ?? raw.conversation_id ?? raw.trajectory_id ?? raw.sessionId ?? null;
+
+      try {
+        if (!getSession(id, home).paused) {
+          setSession(id, { paused: new Date().toISOString() }, home);
+          appendLog([{ ev: canonical, kind: 'session', action: 'paused', harness, mode }], id, home);
+        }
+      } catch { /* the answer stays neutral */ }
+
+      const note = canonical === 'SessionStart' ? { systemMessage: t('blackbrake is PAUSED: nothing is being checked. Resume it in your terminal with "blackbrake resume".') } : null;
+      emit(adapter.render(canonical, note, { native: nativeEvent, input: {} }));
+
+      return;
+    }
 
     if (adapter.skip?.(nativeEvent, raw)) {
       emit(adapter.render(canonical, null, { native: nativeEvent, input: {} }));

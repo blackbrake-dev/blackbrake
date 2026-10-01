@@ -6,6 +6,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { commandArgs, commandFor, findMenuRow, helpRows } from '../src/cli/registry.mjs';
+import { remindToResume, runResume } from '../src/cli/features/pause.mjs';
 import { runUninstall } from '../src/cli/features/uninstall-menu.mjs';
 import { createCostAnalyzer } from '../src/cost/analyzer.mjs';
 import { PRICES_DATE } from '../src/cost/prices.mjs';
@@ -20,8 +21,9 @@ import { createVersionAnalyzer } from '../src/version.mjs';
 import { defaultRoot, listTranscripts } from '../src/transcripts.mjs';
 import { buildAdvice } from '../src/advice.mjs';
 import { renderAdvice, renderAudit, renderDetails } from '../src/ui/audit-view.mjs';
-import { confirm, confirmTyped, isInteractive, launchClaude, logLines, modeBadge, statusLines, statusLineText } from '../src/guard/cli.mjs';
+import { confirm, confirmTyped, isInteractive, launchClaude, logLines, modeBadge, pausedBadge, statusLines, statusLineText } from '../src/guard/cli.mjs';
 import { requireHuman } from '../src/guard/human.mjs';
+import { isPaused } from '../src/guard/pause.mjs';
 import { guardInstalled, setup, uninstall } from '../src/guard/install.mjs';
 import { getMode, getSavedLang, getSetting, hasMode, MODES, readLog, setMode, setSavedLang, setSetting } from '../src/guard/state.mjs';
 import { runningAgents, severity, watch } from '../src/guard/watch.mjs';
@@ -245,7 +247,18 @@ function agentList(value) {
 }
 
 // Installs guard in the given agents, each on its own: one failure does not stop the others.
+// Paused ("blackbrake pause"): nothing is installed, switched on or changed until it is resumed, so
+// that no half-paused state exists. Uninstalling still works. Says so and returns true.
+function refusePaused(p) {
+  if (!isPaused()) return false;
+  print(['', `  ${pausedBadge(p)} ${p.cream(t('blackbrake is paused; run "blackbrake resume" first.'))}`, '']);
+  process.exitCode = 1;
+
+  return true;
+}
+
 function installIn(ids, p) {
+  if (refusePaused(p)) return null;
   const log = (m) => print([`  ${p.amber('✓')} ${t(m)}`]);
   const warn = (m) => print([`  ${p.amber('▲')} ${m}`]);
   const others = ids.filter((id) => id !== 'claude');
@@ -278,6 +291,8 @@ function installIn(ids, p) {
 }
 
 async function setupCommand(opts, p) {
+  if (refusePaused(p)) return false;
+
   // In a terminal, the first installation is the permissions checklist: everything on by default,
   // and the user switches off what they do not want. Scripts use --yes (all on) or --agent.
   // Saved, it goes on to the main menu.
@@ -321,6 +336,8 @@ async function setupCommand(opts, p) {
 // `blackbrake agents`: every harness found, and how blackbrake covers it.
 function agentsLines(p, { all = false } = {}) {
   const out = screen(p, t('AGENTS'), t('where blackbrake runs'), columns(), { pose: 'right', line: t('Inside the agents with hooks; from outside for the rest.') });
+
+  if (isPaused()) out.push(`  ${pausedBadge(p)} ${p.amber(t('You are not protected until you run "blackbrake resume".'))}`, '');
 
   for (const a of agentStatus().filter((x) => all || x.detected || x.installed)) {
     const state = a.installed ? p.green(`● ${t(a.kind === 'hooks' ? 'protected inside (hooks)' : 'watched (history and processes)')}`) : a.detected ? p.coral(`○ ${t('not protected')}`) : p.faint(t('not installed here'));
@@ -571,6 +588,8 @@ async function backgroundCommand(opts, p) {
 
   if (wanted && !['on', 'off'].includes(wanted)) throw new Error(t('Use "blackbrake background on" or "blackbrake background off".'));
 
+  if (wanted === 'on' && refusePaused(p)) return;
+
   if (wanted === 'on') {
     setSetting('autostart', true);
     buildRuntime();
@@ -730,6 +749,8 @@ const PROCEED = {
 };
 
 async function permissionsCommand(opts, p, { fresh = false, nextStep = 'back' } = {}) {
+  if (refusePaused(p)) return false;
+
   print(screen(p, t('PERMISSIONS'), t('where blackbrake runs and what it may do'), columns(), { pose: 'determined', line: t('You decide where I run. Lowering protection asks you to type a word.') }));
 
   // The first time, say plainly that everything starts switched on.
@@ -803,6 +824,8 @@ async function windowCommand(opts, p) {
 
   if (wanted && !['on', 'off'].includes(wanted)) throw new Error(t('Use "blackbrake window on" or "blackbrake window off".'));
 
+  if (wanted === 'on' && refusePaused(p)) return;
+
   // Hiding alerts lowers protection like the rest: a person confirms it in a terminal.
   if (wanted === 'off' && getSetting('window', true) && !(await confirmTyped(p, t('Stop opening the alerts window? Alerts will only show if you open them.'), 'off', getLang() === 'es' ? 'apagar' : null))) {
     print(['', `  ${p.faint(t(isInteractive() ? 'Nothing changed.' : 'Nothing changed: this must be confirmed in an interactive terminal.'))}`, '']);
@@ -826,6 +849,8 @@ async function modeCommand(opts, p) {
   }
 
   if (!MODES.includes(wanted)) throw new Error(t('Unknown mode "{m}". Use observe or protect.', { m: wanted }));
+
+  if (refusePaused(p)) return;
 
   if (wanted === current) {
     print(['', `  ${p.faint(t('Already in'))} ${modeBadge(p, current)}`, '']);
@@ -902,6 +927,8 @@ function tip(p, state) {
   const auditRun = safe(getSetting('last_audit', null));
   const maximum = readLog(undefined, { since: new Date(Date.now() - 864e5).toISOString() }).filter((e) => severity(e) === 'critical').length;
 
+  if (state.paused) return say(p, 'sleep', p.amber(t('PAUSED — nothing is protecting your agents')));
+
   if (!state.installed) return say(p, 'worried', t('I am not protecting any agent yet. Open "Protection and permissions".'));
 
   if (maximum) return say(p, 'alert', t('{n} maximum alert(s) in the last 24 h. See them in "Live session".', { n: maximum }));
@@ -953,6 +980,13 @@ async function interactive(opts, p) {
 
   if (!getSetting('welcomed', false)) await welcome(opts, p);
 
+  // Paused for more than a day: ask once when the menu opens (a pause never expires by itself).
+  if (remindToResume()) {
+    print(['', say(p, 'sleep', p.amber(t('PAUSED — nothing is protecting your agents')))]);
+
+    if (await confirm(p, t('Resume now?'))) await runResume(p, { print });
+  }
+
   for (;;) {
     try {
       const agents = agentStatus();
@@ -961,6 +995,7 @@ async function interactive(opts, p) {
         installed: agents.some((a) => a.installed),
         claude: agents[0].installed,
         mode: getMode(),
+        paused: isPaused(),
         protectedCount: agents.filter((a) => a.installed).length,
         detectedCount: agents.filter((a) => a.detected || a.installed).length,
         running: liveState().agents.length,

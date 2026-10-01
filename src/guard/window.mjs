@@ -6,6 +6,8 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { isWatchRunning } from './watch.mjs';
+// A paused blackbrake opens nothing (the mark's tolerant reading is in pause.mjs).
+import { isPaused } from './pause.mjs';
 import { getSession, getSetting, guardHome, setSession } from './state.mjs';
 
 // Programs are taken from fixed system folders, never from the agent's PATH (a repository can put
@@ -122,14 +124,6 @@ export function liveWindowRunning({ platform = process.platform, run = spawnSync
 export const WINDOW_COOLDOWN_MS = 10 * 60e3;
 
 const SSH_VARS = ['SSH_CONNECTION', 'SSH_CLIENT', 'SSH_TTY'];
-
-// A paused blackbrake (`settings.paused = { at: ISO }`) opens nothing. Reading is tolerant: anything
-// else than a well-formed mark counts as not paused (the failure is towards active protection).
-const isPaused = (home) => {
-  const mark = getSetting('paused', null, home);
-
-  return Object.prototype.toString.call(mark) === '[object Object]' && Number.isFinite(Date.parse(mark.at));
-};
 
 // Why the window must not open now, or null. The first rule that matches decides:
 // paused, off, display, ssh, background, then the session/watcher dedupe and the cooldown.

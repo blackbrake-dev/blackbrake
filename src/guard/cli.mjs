@@ -13,6 +13,7 @@ import { columns, padEnd, screen } from '../ui/term.mjs';
 import { AGENTS } from './agents.mjs';
 import { claudeCommand, guardInstalled, PLUGIN_ID } from './install.mjs';
 import { requireHuman } from './human.mjs';
+import { isPaused } from './pause.mjs';
 import { getSpendBaseline } from './spend-state.mjs';
 import { getMode, guardHome, readLog, sessionHash } from './state.mjs';
 
@@ -108,6 +109,9 @@ function compareApp(app) {
 // The copy the other agents' hooks run (~/.blackbrake/app).
 export const agentsIntegrity = () => compareApp(path.join(guardHome(), 'app')).map((c) => clean(c.replace(/\\/g, '/'), 120));
 
+// The orange PAUSED tag ("blackbrake pause"), shown wherever the mode is.
+export const pausedBadge = (p) => p.onBrown(p.amber(p.bold(` ${t('PAUSED')} `)));
+
 export function modeBadge(p, mode) {
   return mode === 'protect' ? p.onOrange(p.ink(p.bold(` ${t('PROTECT')} `))) : p.onBrown(p.amber(p.bold(` ${t('OBSERVE')} `)));
 }
@@ -117,7 +121,13 @@ export function statusLines(p, { days = 7 } = {}) {
   const mode = getMode();
   const since = new Date(Date.now() - days * 864e5).toISOString();
   const events = readLog(undefined, { since }).filter(interesting);
-  const out = screen(p, 'GUARD', t('status of guard in your agents'), columns(), { pose: mode === 'protect' ? 'determined' : 'idle', line: t(mode === 'protect' ? 'Protecting: risky steps are stopped.' : 'Observing: I warn and log, nothing is stopped.') });
+  const paused = isPaused();
+
+  const out = screen(p, 'GUARD', t('status of guard in your agents'), columns(), paused
+    ? { pose: 'sleep', line: t('PAUSED — nothing is protecting your agents') }
+    : { pose: mode === 'protect' ? 'determined' : 'idle', line: t(mode === 'protect' ? 'Protecting: risky steps are stopped.' : 'Observing: I warn and log, nothing is stopped.') });
+
+  if (paused) out.push(`  ${pausedBadge(p)} ${p.amber(t('You are not protected until you run "blackbrake resume".'))}`, '');
   // Hooks that ran in the last day while no installed plugin is registered: loaded another way
   // (claude --plugin-dir, a copied hooks config). It runs, but its code cannot be checked here.
   const dayAgo = new Date(Date.now() - 864e5).toISOString();
@@ -183,6 +193,7 @@ export function logLines(p, { days = 7 } = {}) {
 
 // One line for Claude Code's status bar: reads the session JSON Claude Code sends on stdin.
 export function statusLineText(p, input) {
+  if (isPaused()) return `${p.orange('▀▄')} blackbrake ${pausedBadge(p)}`;
   const mode = getMode();
   const s = sessionHash(input?.session_id);
   const alerts = readLog().filter((e) => e.s === s && interesting(e) && e.kind !== 'error').length;

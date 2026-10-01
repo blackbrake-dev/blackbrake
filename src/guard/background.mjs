@@ -17,6 +17,7 @@ import { findSecrets } from './policy.mjs';
 import { detectedHarnesses, harnessDirs, HARNESSES } from './registry.mjs';
 import { SKIP_DIRS, skippedAsOwnCredential } from './scan.mjs';
 import { pruneScrubs } from '../fix/scrub.mjs';
+import { isPaused } from './pause.mjs';
 import { appendLog, getSetting, guardHome, writePrivate } from './state.mjs';
 import { createAlertSink, createTail, isWatchRunning, notify } from './watch.mjs';
 import { maybeOpenWindow, systemProgram } from './window.mjs';
@@ -157,6 +158,8 @@ export function createFollower(harnesses = watchedHarnesses(), { maxFiles = 2000
 // ---------- the loop ----------
 
 export async function runBackground({ home = guardHome(), intervalMs = 8000, cli, once = false, notifier = notify } = {}) {
+  // Paused ("blackbrake pause"): the watcher does not start, and stops when it sees the mark.
+  if (isPaused(home)) return 'paused';
   const pidFile = path.join(home, 'watch-bg.pid');
   fs.mkdirSync(home, { recursive: true, mode: 0o700 });
   writePrivate(pidFile, String(process.pid));
@@ -232,16 +235,22 @@ export async function runBackground({ home = guardHome(), intervalMs = 8000, cli
 
   await new Promise((resolve) => {
     const timer = setInterval(() => {
+      if (isPaused(home)) {
+        stop();
+
+        return;
+      }
+
       try { tick(); } catch { /* keep watching */ }
     }, intervalMs);
 
-    const stop = () => {
+    function stop() {
       clearInterval(timer);
 
       try { if (fs.readFileSync(pidFile, 'utf8') === String(process.pid)) fs.rmSync(pidFile); } catch { /* gone */ }
 
       resolve();
-    };
+    }
 
     process.once('SIGINT', stop);
     process.once('SIGTERM', stop);

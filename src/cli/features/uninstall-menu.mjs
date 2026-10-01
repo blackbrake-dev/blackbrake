@@ -16,6 +16,7 @@ import { autostartFile, autostartInstalled, removeAutostart } from '../../guard/
 import { confirmTyped, isInteractive } from '../../guard/cli.mjs';
 import { requireHuman } from '../../guard/human.mjs';
 import { GUARD_ENTRIES, guardInstalled, uninstall as uninstallClaudePlugin } from '../../guard/install.mjs';
+import { clearPaused, isPaused } from '../../guard/pause.mjs';
 import { findWatchers, findWindows } from '../../guard/procs.mjs';
 import { guardHome } from '../../guard/state.mjs';
 import { getLang, t } from '../../i18n.mjs';
@@ -80,6 +81,8 @@ export const realDeps = () => ({
   removeLoginItem: (o) => removeAutostart(o),
   removeHooks: (ids, { log }) => uninstallAgents(ids, { log }),
   removeClaude: (o) => uninstallClaudePlugin(o),
+  // A pause left behind would block a later "blackbrake setup" ("run resume first").
+  clearPause: () => { if (isPaused()) clearPaused(); },
   select,
 });
 
@@ -221,6 +224,8 @@ export async function runUninstall(opts, p, { confirmed = false, io = {}, deps =
   // Removing it from everything also stops the background watcher (every one of this user, found
   // in the process table), closes the alerts windows and removes the login item.
   if (all && deps.removeLoginItem({ sweep: true, windows: true, onSweep: (r) => { sweep = r; } })) log(t('Stopped the background watcher and removed its login item'));
+
+  if (all) deps.clearPause?.();
   const hooks = ids.filter((id) => id !== 'claude');
 
   if (hooks.length) deps.removeHooks(hooks, { log });

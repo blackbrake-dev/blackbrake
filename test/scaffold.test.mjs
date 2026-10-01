@@ -123,8 +123,6 @@ test('stubs answer "not available yet" in English and Spanish and change no stat
   const baseline = tree(home);
 
   for (const [args, en, es] of [
-    [['pause'], /Pausing is not available yet/, /Pausar todavía no está disponible/],
-    [['resume'], /Resuming is not available yet/, /Reanudar todavía no está disponible/],
     [['report'], /Reports are not available yet/, /Los informes todavía no están disponibles/],
     [['report', 'send', 'x.md'], /Reports are not available yet/, /Los informes todavía no están disponibles/],
     [['report', 'security'], /Reports are not available yet/, /Los informes todavía no están disponibles/],
