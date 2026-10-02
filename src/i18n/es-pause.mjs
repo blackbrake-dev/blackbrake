@@ -9,7 +9,7 @@ export const ES = {
   'PAUSED': 'PAUSADO',
   'PAUSED — nothing is protecting your agents': 'PAUSADO — nada protege a tus agentes',
   'Resume now?': '¿Reanudar ahora?',
-  'Pause all of blackbrake? Nothing will protect or watch your AI agents until you resume: the hooks stay installed but do nothing, the watcher and the alerts window stop.': '¿Pausar todo blackbrake? Nada protegerá ni vigilará a tus agentes de IA hasta que lo reanudes: los ganchos siguen instalados pero no hacen nada, y el vigilante y la ventana de alertas se paran.',
+  'Pause all of blackbrake? Nothing will protect your AI agents from leaking secrets or overspending until you resume: the hooks stay installed and only refuse attempts to switch blackbrake off, and the watcher and the alerts window stop.': '¿Pausar todo blackbrake? Nada protegerá a tus agentes de IA de filtrar secretos ni de gastar de más hasta que lo reanudes: los ganchos siguen instalados y solo rechazan los intentos de desactivar blackbrake, y el vigilante y la ventana de alertas se paran.',
   'blackbrake is already paused. "blackbrake resume" turns it back on.': 'blackbrake ya está pausado. "blackbrake resume" lo vuelve a activar.',
   'Nothing to pause: blackbrake is not installed anywhere.': 'No hay nada que pausar: blackbrake no está instalado en ningún sitio.',
   'blackbrake is paused': 'blackbrake está pausado',
@@ -38,6 +38,6 @@ export const ES = {
   'It starts at your next login, or now with "blackbrake background on".': 'Arranca en tu próximo inicio de sesión, o ahora con "blackbrake background on".',
   'Watcher: off (your choice; "blackbrake background on" turns it on)': 'Vigilante: apagado (tu elección; "blackbrake background on" lo enciende)',
   'blackbrake is paused; run "blackbrake resume" first.': 'blackbrake está pausado; ejecuta antes "blackbrake resume".',
-  'blackbrake is PAUSED: nothing is being checked. Resume it in your terminal with "blackbrake resume".': 'blackbrake está PAUSADO: no se comprueba nada. Reanúdalo en tu terminal con "blackbrake resume".',
+  'blackbrake is PAUSED: only attempts to switch it off are checked; secrets and spend are not. Resume it in your terminal with "blackbrake resume".': 'blackbrake está PAUSADO: solo se vigilan los intentos de desactivarlo; los secretos y el gasto no. Reanúdalo en tu terminal con "blackbrake resume".',
   'blackbrake is paused: nothing is being watched. This window closes now; "blackbrake resume" turns it back on.': 'blackbrake está pausado: no se vigila nada. Esta ventana se cierra ahora; "blackbrake resume" la vuelve a activar.',
 };

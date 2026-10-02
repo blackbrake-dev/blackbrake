@@ -87,7 +87,7 @@ export async function runPause(p, { by = 'cli', io = {}, deps = realDeps(), prin
     return 0;
   }
 
-  const question = t('Pause all of blackbrake? Nothing will protect or watch your AI agents until you resume: the hooks stay installed but do nothing, the watcher and the alerts window stop.');
+  const question = t('Pause all of blackbrake? Nothing will protect your AI agents from leaking secrets or overspending until you resume: the hooks stay installed and only refuse attempts to switch blackbrake off, and the watcher and the alerts window stop.');
 
   if (!(await confirmTyped(p, question, 'pause', getLang() === 'es' ? 'pausar' : null, io))) {
     print(['', `  ${p.faint(t(human.ok ? 'Nothing changed.' : 'Nothing changed: this must be confirmed in an interactive terminal.'))}`, '']);

@@ -253,18 +253,27 @@ async function main() {
 
     // Paused by the user ("blackbrake pause"): a neutral answer in the agent's own format, nothing
     // analysed, blocked or recorded beyond one "paused" line per session. SessionStart says so.
-    if (isPaused(home)) {
-      const id = raw.session_id ?? raw.conversation_id ?? raw.trajectory_id ?? raw.sessionId ?? null;
+    // Paused by the user ("blackbrake pause"): a neutral answer in the agent's own format, nothing
+    // analysed, blocked or recorded beyond one "paused" line per session. SessionStart says so.
+    // A tool call is still checked for tampering with blackbrake itself (review A, 2026-10-01): the
+    // pause stops the secret and spend checks, it does not let an agent rewrite or remove guard.
+    const paused = isPaused(home);
+    const pausedId = raw.session_id ?? raw.conversation_id ?? raw.trajectory_id ?? raw.sessionId ?? null;
 
+    const neutral = () => {
       try {
-        if (!getSession(id, home).paused) {
-          setSession(id, { paused: new Date().toISOString() }, home);
-          appendLog([{ ev: canonical, kind: 'session', action: 'paused', harness, mode }], id, home);
+        if (!getSession(pausedId, home).paused) {
+          setSession(pausedId, { paused: new Date().toISOString() }, home);
+          appendLog([{ ev: canonical, kind: 'session', action: 'paused', harness, mode }], pausedId, home);
         }
       } catch { /* the answer stays neutral */ }
 
-      const note = canonical === 'SessionStart' ? { systemMessage: t('blackbrake is PAUSED: nothing is being checked. Resume it in your terminal with "blackbrake resume".') } : null;
+      const note = canonical === 'SessionStart' ? { systemMessage: t('blackbrake is PAUSED: only attempts to switch it off are checked; secrets and spend are not. Resume it in your terminal with "blackbrake resume".') } : null;
       emit(adapter.render(canonical, note, { native: nativeEvent, input: {} }));
+    };
+
+    if (paused && canonical !== 'PreToolUse') {
+      neutral();
 
       return;
     }
@@ -444,6 +453,22 @@ async function main() {
     }
 
     let { output, log } = decide(event, input, ctx);
+
+    // Paused: only a tampering finding stands (refused and recorded); anything else is neutral.
+    if (paused) {
+      const tampering = log.filter((e) => e.kind === 'tamper');
+
+      if (!tampering.length) {
+        neutral();
+
+        return;
+      }
+
+      try { appendLog(tampering.map((e) => ({ ...e, mode, harness })), input.session_id, home); } catch { /* the denial still applies */ }
+      emit(adapter.render(event, output, { native: nativeEvent, input }));
+
+      return;
+    }
 
     // The common tool path does not load spend parsing/state code. An open episode, a real prompt
     // or a transcript event loads it on demand; failures cannot weaken the security decision.

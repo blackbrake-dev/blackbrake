@@ -163,7 +163,23 @@ test('tamper protection denies in both modes', () => {
     'blackbrake $x',
     'FOO=1 blackbrake --json pause',
     'xargs blackbrake pause',
-    'echo hi | blackbrake -j pause'
+    'echo hi | blackbrake -j pause',
+    // Review A (2026-10-01): a flag that takes a value swallows the next word, as the CLI does.
+    'blackbrake --path status pause',
+    'blackbrake --lang status uninstall',
+    'blackbrake --home status mode observe',
+    'blackbrake --days status window off',
+    'blackbrake --agent status report',
+    'npx blackbrake --path status pause',
+    'node bin/blackbrake.mjs --path status pause',
+    // The subcommand arrives on stdin.
+    'echo pause | xargs blackbrake',
+    'parallel blackbrake ::: pause',
+    // Review A: a name built in several assignments, in the order the shell runs them.
+    'd=.black; d=${d}brake; echo {} > ~/$d/state.json',
+    'a=.bl; a+=ackbrake; echo {} > ~/$a/state.json',
+    'a=black; a+=brake; $a report send x.md',
+    'a=black; a=${a}brake; $a setup',
   ];
 
   for (const cmd of c1Deny) {
@@ -180,7 +196,13 @@ test('tamper protection denies in both modes', () => {
     'git -C blackbrake commit -- a',
     'cd blackbrake && npm test',
     'ls blackbrake',
-    'npm test --prefix blackbrake'
+    'npm test --prefix blackbrake',
+    'blackbrake log --days 3',
+    'blackbrake --days 3 log',
+    'blackbrake scan --agent codex',
+    'blackbrake --agent codex scan',
+    'blackbrake audit --path ./logs --json',
+    'blackbrake --lang es status',
   ];
 
   for (const cmd of c1Allow) {

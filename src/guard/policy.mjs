@@ -314,11 +314,6 @@ export function shellViews(command = '') {
   const joined = joinPieces(literal);
   const vars = new Map();
 
-  // bash: NAME=value, export/local/set NAME=value; PowerShell: $NAME = "a" + "b".
-  for (const m of joined.matchAll(/(?:^|[\s;&|(])(?:export\s+|local\s+|declare\s+|set\s+)?([A-Za-z_]\w*)=("[^"\n]*"|'[^'\n]*'|[^\s;&|)]*)/g)) vars.set(m[1], m[2].replace(/^["']|["']$/g, ''));
-
-  for (const m of joined.matchAll(/\$([A-Za-z_]\w*)\s*=\s*([^;\n]+)/g)) vars.set(m[1], m[2].trim().replace(/["']/g, ''));
-
   // ${v:2}, ${v:1:3}, ${v/x/c}, ${v//x/}, ${v#pre}, ${v%suf}: applied with literal patterns only
   // (a pattern holding glob characters is left alone, as is anything unknown).
   const operate = (value, op) => {
@@ -365,6 +360,20 @@ export function shellViews(command = '') {
       return budget >= 0 ? value : all;
     });
   };
+
+  // Assignments in the order the shell runs them, each value expanded with what the variables held
+  // at that point: `d=.black; d=${d}brake` and `a=.bl; a+=ackbrake` both end as `.blackbrake`
+  // (review A, 2026-10-01: last-one-wins left `${d}brake` pointing at itself, unresolved).
+  // bash: NAME=value, NAME+=value, export/local/declare/set NAME=value; PowerShell: $NAME = …, $NAME += ….
+  const assignments = [
+    ...[...joined.matchAll(/(?:^|[\s;&|(])(?:export\s+|local\s+|declare\s+|set\s+)?([A-Za-z_]\w*)(\+?)=("[^"\n]*"|'[^'\n]*'|[^\s;&|)]*)/g)].map((m) => ({ at: m.index, name: m[1], append: m[2] === '+', value: m[3].replace(/^["']|["']$/g, '') })),
+    ...[...joined.matchAll(/\$([A-Za-z_]\w*)\s*(\+?)=\s*([^;\n]+)/g)].map((m) => ({ at: m.index, name: m[1], append: m[2] === '+', value: m[3].trim().replace(/["']/g, '').replace(/\s*\+\s*/g, '') })),
+  ].sort((a, b) => a.at - b.at).slice(0, 256);
+
+  for (const { name, append, value } of assignments) {
+    const now = expand(value, vars);
+    vars.set(name, `${append ? vars.get(name) ?? '' : ''}${now}`.slice(0, 64 * 1024));
+  }
 
   // Resolve values before inserting them: replacing ${e} with $d next to 'brake' would invent $dbrake.
   for (let i = 0; i < 8 && vars.size; i++) {
@@ -666,7 +675,10 @@ const BLACKBRAKE_TOKEN = /^(?:.*[/])?blackbrake(?:@\S*)?(?:\.(?:mjs|cmd|ps1|exe)
 
 const BLACKBRAKE_READ_SUBCOMMANDS = new Set(['status', 'log', 'agents', 'scan', 'audit', 'help']);
 
-const LAUNCHERS = new Set(['env', 'sudo', 'doas', 'nohup', 'time', 'command', 'exec', 'builtin', 'nice', 'ionice', 'timeout', 'stdbuf', 'xargs', 'setsid', 'chroot', 'cmd', 'call', 'start', 'bash', 'sh', 'zsh', 'dash', 'fish', 'ksh', 'pwsh', 'powershell', 'node', 'bun', 'deno', 'npx', 'bunx', 'pnpm', 'pnpx', 'npm', 'yarn', 'volta', 'winpty', 'script', 'expect', 'unbuffer', 'watch', 'then', 'do', 'else', 'if', 'while', 'until', 'start-process', 'invoke-command', 'icm']);
+// The flags of bin/blackbrake.mjs that take the next word as their value (keep in step with parseArgs).
+const VALUE_FLAGS = new Set(['--path', '--home', '--lang', '--agent', '--days']);
+
+const LAUNCHERS = new Set(['env', 'sudo', 'doas', 'nohup', 'time', 'command', 'exec', 'builtin', 'nice', 'ionice', 'timeout', 'stdbuf', 'xargs', 'parallel', 'setsid', 'chroot', 'cmd', 'call', 'start', 'bash', 'sh', 'zsh', 'dash', 'fish', 'ksh', 'pwsh', 'powershell', 'node', 'bun', 'deno', 'npx', 'bunx', 'pnpm', 'pnpx', 'npm', 'yarn', 'volta', 'winpty', 'script', 'expect', 'unbuffer', 'watch', 'then', 'do', 'else', 'if', 'while', 'until', 'start-process', 'invoke-command', 'icm']);
 
 function blackbrakeRunsNonRead(view) {
   // Parts and the separator after each: [part, sep, part, sep, …, part].
@@ -688,14 +700,17 @@ function blackbrakeRunsNonRead(view) {
 
     if (at < 0) continue;
 
+    // Read the words the way bin/blackbrake.mjs parseArgs does: a flag that takes a value swallows
+    // the next word (`blackbrake --path status pause` runs pause), every other flag is skipped.
     let j = at + 1;
 
-    while (j < words.length && words[j].startsWith('-')) j++;
+    while (j < words.length && words[j].startsWith('-')) j += VALUE_FLAGS.has(words[j].toLowerCase()) ? 2 : 1;
 
     if (j < words.length && !BLACKBRAKE_READ_SUBCOMMANDS.has(words[j].toLowerCase())) return true;
 
-    // No subcommand in sight because an expansion builds it (`blackbrake $(echo pau)se`): unknown, refused.
-    if (j === words.length && /^(\$\(|`|\(|\{)$/.test(pieces[k + 1] ?? '')) return true;
+    // No subcommand in sight because an expansion builds it (`blackbrake $(echo pau)se`) or it
+    // arrives on stdin (`echo pause | xargs blackbrake`, `parallel blackbrake ::: pause`): refused.
+    if (j >= words.length && (/^(\$\(|`|\(|\{)$/.test(pieces[k + 1] ?? '') || words.slice(0, at).some((w) => /^(xargs|parallel)$/i.test(w)) || words.slice(at).includes(':::'))) return true;
   }
 
   return false;
