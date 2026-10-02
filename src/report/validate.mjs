@@ -72,7 +72,12 @@ function prepareIdentity(identity) {
     return s.length >= 3 ? s : null;
   };
 
-  return { home: pick(id.home), user: pick(id.user), host: pick(id.host) };
+  // The host name whole and its first label too (review B: "Studio-Mac-7" of "Studio-Mac-7.local"
+  // got through), and, on Windows, COMPUTERNAME.
+  const host = String(id.host ?? '');
+  const hosts = [host, host.split('.')[0], identity ? '' : process.env.COMPUTERNAME].flatMap((h) => pick(h) ?? []);
+
+  return { home: pick(id.home), user: pick(id.user), host: pick(id.host), hosts: [...new Set(hosts)] };
 }
 
 function collector() {
@@ -124,7 +129,9 @@ function checkAlphabet(line, n, p) {
 
 // V6: nothing that a Markdown or mail reader turns into a link. `<`, `>`, `[`, `]`, `&` and `@` are
 // already outside the alphabet; this is the rest.
-const LINK = /:\/\/|www\.|(?<![a-z0-9])(?:mailto|javascript|data|file):/i;
+// Any URI scheme stuck to its value (tel:, sms:, ms-msdt:, search-ms: … not just a fixed list; review
+// B). "Note: text" (a space after the colon) is prose, and so are the generated "Version: x" lines.
+const LINK = /:\/\/|www\.|(?<![a-z0-9+.-])[a-z][a-z0-9+.-]{1,30}:(?=[^\s:])/i;
 
 // V7 (shape part). A path, a long hexadecimal or base64-looking run, or an address identifies
 // something the person did not mean to share.
@@ -144,11 +151,13 @@ const IPV6_FULL = /(?<![0-9a-z:])(?:[0-9a-f]{1,4}:){7}[0-9a-f]{1,4}(?![0-9a-z:])
 
 const IPV6_SHORT = /(?<![0-9a-z:])(?:[0-9a-f]{1,4}(?::[0-9a-f]{1,4}){0,6})?::(?:[0-9a-f]{1,4}(?::[0-9a-f]{1,4}){0,6})?(?![0-9a-z:])/gi;
 
-const LONG_RUN = /[A-Za-z0-9+/_-]{24,}/g;
+// Dots do not split a token (review B: "<20>.<20>" got through as two short runs).
+const LONG_RUN = /[A-Za-z0-9+/_.-]{24,}/g;
 
 // Plain hyphenated words ("well-known-pre-existing-condition") are prose, not tokens. The same shape
-// covers rule ids such as 1password-service-account-token.
-const KEBAB = /^[a-z0-9]+(?:-[a-z]+){2,}$/;
+// covers rule ids such as 1password-service-account-token. The first part must be word-sized
+// (review B: "<30 random characters>-aa-bb" passed as a kebab word).
+const KEBAB = /^[a-z0-9]{1,15}(?:-[a-z]+){2,}$/;
 
 function checkPrivacy(line, n, ident, p) {
   const lower = line.toLowerCase();
@@ -156,7 +165,7 @@ function checkPrivacy(line, n, ident, p) {
 
   if (PATH_DRIVE.test(line) || PATH_LEAD.test(line) || PATH_SLASHES.test(line)) p.add('V7', 'privacy-path', n);
 
-  if ((ident.home && slashed.includes(ident.home)) || (ident.user && lower.includes(ident.user)) || (ident.host && lower.includes(ident.host))) p.add('V7', 'privacy-identity', n);
+  if ((ident.home && slashed.includes(ident.home)) || (ident.user && lower.includes(ident.user)) || ident.hosts.some((h) => lower.includes(h))) p.add('V7', 'privacy-identity', n);
 
   if (HEX.test(line) || UUID.test(line)) p.add('V7', 'privacy-hex', n);
 

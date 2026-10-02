@@ -81,4 +81,5 @@ export const ES = {
   'expires in {n} days': 'caduca en {n} días',
   'Delete every saved report?': '¿Borrar todos los informes guardados?',
   '{n} report(s) deleted.': '{n} informe(s) borrado(s).',
+  'This file is not a valid report any more; it is shown as plain text:': 'Este fichero ya no es un informe válido; se muestra como texto sin más:',
 };

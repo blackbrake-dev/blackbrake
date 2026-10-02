@@ -8,7 +8,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { PassThrough } from 'node:stream';
 import { afterEach, test } from 'node:test';
-import { runReport, runWizard } from '../src/cli/features/report.mjs';
+import { gatherData, runReport, runWizard } from '../src/cli/features/report.mjs';
 import { setLang } from '../src/i18n.mjs';
 import { assertSafeMailto, MAX_URL } from '../src/report/mailto.mjs';
 import { mailtoCommand, openMailto } from '../src/report/open.mjs';
@@ -252,6 +252,26 @@ test('list, show and check work in a pipe; delete needs a terminal; delete --all
   assert.equal(saved(m).length, 1, 'a wrong word deletes nothing');
   assert.match((await report(m, ['delete'], terminal({ lines: ['delete'] }), { all: true })).out, /1 report\(s\) deleted/);
   assert.deepEqual(saved(m), []);
+});
+
+// Review B (2026-10-01): an edited file is never shown as if it were valid; a log line with a made-up
+// action never reaches the activity section; invisible characters are cleaned from the screen.
+test('review B: show warns about an invalid file; only real actions are counted; invisibles are cleaned', async () => {
+  const m = machine();
+  const name = saveReport('product', '# blackbrake report (product)\nVersion: 0.3.0, Date: 2026-10-01\n\n## Summary\nfine\n', { home: m.home, now: NOW });
+  fs.appendFileSync(path.join(reportsDir(m.home), name), 'a͏b️c⁥d￹e\n');
+  const shown = await report(m, ['show', name], terminal({ tty: false }));
+  assert.equal(shown.code, 1);
+  assert.match(shown.out, /not a valid report any more/);
+  assert.match(shown.out, /abcde/, 'the invisible characters are gone from the screen');
+
+  const home = tmp();
+  fs.mkdirSync(path.join(home, 'log'), { recursive: true });
+  const ts = new Date().toISOString();
+  fs.writeFileSync(path.join(home, 'log', `${ts.slice(0, 7)}.jsonl`), [{ kind: 'tamper', action: 'denied' }, { kind: 'tamper', action: 'my-client-name-x' }].map((e) => JSON.stringify({ ts, s: 'x', ...e })).join('\n') + '\n');
+  const data = gatherData({ home, version: VERSION });
+  assert.deepEqual(data.actions, { denied: 1 });
+  assert.equal(data.kinds.tamper, 2);
 });
 
 // ---------- opening the mail app ----------

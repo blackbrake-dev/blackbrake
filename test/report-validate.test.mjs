@@ -369,3 +369,22 @@ test('aggregateReport: nothing is included unless its box was ticked', () => {
   const built = buildReport({ kind: 'product', version: '0.3.0', now: new Date('2026-09-30T00:00:00Z'), rules, identity, fields: { Summary: 'x' }, sections: all.sections });
   assert.equal(built.ok, true, JSON.stringify(built.problems));
 });
+
+// Review B (2026-10-01): what still got through.
+test('review B: short host name, dotted or kebab-shaped tokens, any URI scheme', () => {
+  const field = (text, id = identity) => validateFreeText(text, { rules, identity: id, maxChars: 500 });
+  const codes = (r) => r.problems.map((x) => x.code);
+  const mac = { home: '/Users/maria', user: 'maria', host: 'Studio-Mac-7.local' };
+
+  assert.ok(codes(field('crash on Studio-Mac-7 after the scan', mac)).includes('privacy-identity'), 'the short host name, without .local');
+  assert.ok(codes(field('crash on studio-mac-7.local', mac)).includes('privacy-identity'), 'the full one still');
+
+  // Synthetic random runs, built here (not credential-shaped for any provider).
+  const run = (n, seed) => Array.from({ length: n }, (_, i) => 'abcdefghijklmnopqrstuvwxyz0123456789'[(i * 7 + seed * 13) % 36]).join('');
+  assert.ok(codes(field(`${run(30, 1)}-aa-bb`)).includes('privacy-token'), 'a long first segment is not a kebab word');
+  assert.ok(codes(field(`${run(20, 2)}.${run(20, 3)}`)).includes('privacy-token'), 'dots do not split a token');
+  assert.equal(field('a well-known pre-existing condition').ok, true, 'real hyphenated prose stays fine');
+
+  for (const text of ['call tel:12345', 'text sms:12345', 'open ms-msdt:x', 'search-ms:query']) assert.ok(codes(field(text)).includes('link'), text);
+  assert.equal(field('Note: the menu froze').ok, true, 'a word, a colon and a space is prose');
+});

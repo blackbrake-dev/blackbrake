@@ -7,7 +7,9 @@ import { isObject, isText } from './kinds.mjs';
 // clipboard. Removes C0/C1 controls (newlines become spaces), bidirectional overrides, zero-width
 // characters and Unicode tag characters, then truncates.
 // oxlint-disable-next-line no-control-regex -- matching control characters is the point
-const UNSAFE = /[\u0000-\u0008\u000b-\u001f\u007f-\u009f\u00ad\u061c\u115f\u1160\u180e\u200b-\u200f\u2028-\u202e\u2060-\u2064\u2066-\u2069\u3164\ufeff\uffa0]|[\u{E0000}-\u{E007F}]/gu;
+// Also the invisible joiners and selectors review B found still showing (CGJ U+034F, Khmer U+17B4-5,
+// Mongolian U+180B-F, U+2065, variation selectors, interlinear annotation U+FFF9-B).
+const UNSAFE = /[\u0000-\u0008\u000b-\u001f\u007f-\u009f\u00ad\u034f\u061c\u115f\u1160\u17b4\u17b5\u180b-\u180f\u200b-\u200f\u2028-\u202e\u2060-\u2069\u3164\ufe00-\ufe0f\ufeff\uffa0\ufff0-\ufffb]|[\u{E0000}-\u{E007F}\u{E0100}-\u{E01EF}]/gu;
 
 // Every string inside a plain object or array, cleaned (for data about to be shown or exported).
 export function cleanDeep(value, max = 500) {

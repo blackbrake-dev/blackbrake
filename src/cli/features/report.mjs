@@ -93,7 +93,10 @@ export function gatherData({ home, days = 7, version } = {}) {
   for (const e of readLog(home, { since })) {
     if (!Object.hasOwn(KIND, e.kind)) continue;
     add(kinds, e.kind);
-    add(actions, e.action);
+
+    // Only the actions guard writes (review B: anything that can append to the log could otherwise
+    // put a word of its own into the activity section).
+    if (ACTIONS.has(e.action)) add(actions, e.action);
 
     // Only secret findings carry a rule id; other kinds use that field for other things.
     if (/^secret-/.test(e.kind) && e.rule) add(byRule, e.rule);
@@ -123,6 +126,9 @@ export function gatherData({ home, days = 7, version } = {}) {
     problems: { error: kinds.error ?? 0, tamper: kinds.tamper ?? 0 },
   };
 }
+
+// Every action guard records in its log (src/guard/policy.mjs, hook.mjs, background.mjs).
+const ACTIONS = new Set(['denied', 'warned', 'blocked', 'redacted', 'asked', 'allowed', 'seen', 'noted', 'skipped', 'paused', 'start', 'running', 'end']);
 
 const BOXES = [
   ['setup', 'About my setup'],
@@ -400,15 +406,21 @@ export async function runReport(ctx, { io = {}, deps = realDeps() } = {}) {
   if (sub === 'check') return checkOne(p, name, { deps, print }).ok ? 0 : 1;
 
   if (sub === 'show') {
-    try {
-      print(['', ...numbered(p, new TextDecoder().decode(readReport(name, { home: deps.home }))), '']);
-    } catch (e) {
+    let bytes;
+
+    try { bytes = readReport(name, { home: deps.home }); } catch (e) {
       print(unreadable(p, e));
 
       return 1;
     }
 
-    return 0;
+    // An edited or planted file is shown, but never as if it were a valid report (review B).
+    const valid = validateReport(bytes, { kind: reportKind(name), rules: deps.rules(), identity: deps.identity });
+    const warning = valid.ok ? [] : [`  ${p.coral('✗')} ${p.cream(t('This file is not a valid report any more; it is shown as plain text:'))}`, ...problemLines(p, valid.problems)];
+
+    print(['', ...warning, ...numbered(p, new TextDecoder().decode(bytes)), '']);
+
+    return valid.ok ? 0 : 1;
   }
 
   // Everything else writes, opens or deletes: a person at a terminal only.
