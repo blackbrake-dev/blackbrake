@@ -7,6 +7,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { assertNoLinks } from '../guard/install.mjs';
+import { mayChange } from '../guard/safety.mjs';
 import { guardHome } from '../guard/state.mjs';
 import { SYNCED } from './scrub.mjs';
 import { isCount, isRecord } from '../kinds.mjs';
@@ -56,6 +57,10 @@ export function planSettings(ids, file = claudeSettingsFile()) {
 
 export function applySettings(plan, { home = guardHome() } = {}) {
   const { file, value } = plan;
+
+  // The real ~/.claude/settings.json and guard's backups: only by the program (safety.mjs).
+  mayChange(path.resolve(file));
+  mayChange(path.resolve(home));
   assertNoLinks(path.dirname(file));
 
   // Claude Code writes this file too: if it changed since the change was shown, nothing is applied.

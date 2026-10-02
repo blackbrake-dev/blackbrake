@@ -10,7 +10,10 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { t } from '../i18n.mjs';
 import { clean, isLocalPath } from '../text.mjs';
+import { mayChange } from './safety.mjs';
 import { getMode, guardHome, hasMode, setMode } from './state.mjs';
+
+const claudeConfigDir = () => process.env.CLAUDE_CONFIG_DIR || path.join(os.homedir(), '.claude');
 
 export const PLUGIN_ID = 'blackbrake@blackbrake';
 
@@ -62,7 +65,7 @@ export function assertNoLinks(target) {
 // guard's folder must be a real directory of its own: not a symlink or junction (which would make
 // a recursive delete land elsewhere), not the home folder, not a drive or filesystem root.
 export function assertOwnFolder(dir) {
-  const abs = path.resolve(dir);
+  const abs = mayChange(path.resolve(dir));
   const forbidden = [os.homedir(), path.parse(abs).root, path.dirname(os.homedir())].map((p) => path.resolve(p).toLowerCase());
 
   if (forbidden.includes(abs.toLowerCase())) throw new Error(`Refusing to use ${abs} as blackbrake's folder.`);
@@ -103,6 +106,8 @@ function ownMarketplace(dest) {
 // Deletes one of guard's folders. On Windows a file in use (an antivirus scan, the alerts window)
 // can refuse a delete for a moment: retry, then say what to do instead of leaving it half gone.
 export function removeOwn(dir) {
+  mayChange(path.resolve(dir));
+
   try {
     fs.rmSync(dir, { recursive: true, force: true, maxRetries: 6, retryDelay: 250 });
   } catch (e) {
@@ -171,6 +176,8 @@ export function claudeCommand(args) {
 
 // Run the Claude Code CLI with fixed arguments and paths we built.
 export function runClaude(args, { capture = true } = {}) {
+  // Installing or removing plugins and marketplaces changes the real Claude Code configuration.
+  if (/^(install|uninstall|enable|disable|add|remove|rm|update)$/.test(args[1] ?? '') || /^(install|uninstall|enable|disable|add|remove|rm|update)$/.test(args[2] ?? '')) mayChange(path.resolve(claudeConfigDir()));
   const c = claudeCommand(args);
   const r = spawnSync(c.file, c.args, { encoding: 'utf8', stdio: capture ? 'pipe' : 'inherit', timeout: 120000, shell: c.shell });
   const out = clean(`${r.stdout ?? ''}${r.stderr ?? ''}`.trim(), 2000);
@@ -224,6 +231,9 @@ export function setup({ log = () => {} } = {}) {
 }
 
 export function uninstall({ keepLog = true, log = () => {} } = {}) {
+  // Checked before anything at all is done, Claude Code's plugin removal included (safety.mjs).
+  mayChange(path.resolve(guardHome()));
+  mayChange(path.resolve(claudeConfigDir()));
   const r1 = runClaude(['plugin', 'uninstall', PLUGIN_ID]);
   log(r1.ok ? t('Uninstalled {id}', { id: PLUGIN_ID }) : t('Plugin was not installed ({why})', { why: r1.out.split('\n')[0] || '-' }));
   const r2 = runClaude(['plugin', 'marketplace', 'remove', MARKETPLACE]);

@@ -12,6 +12,7 @@ import { ADAPTERS, renderError } from './harnesses.mjs';
 import { decide, isSensitivePath, linkedPlaces, loginItemFile, protectedTarget, shellViews, withinBudget } from './policy.mjs';
 import { isLocalPath, localFileStat } from '../text.mjs';
 import { isPaused } from './pause.mjs';
+import { declareProgram } from './safety.mjs';
 import { appendLog, getMode, getSavedLang, getSession, setSession, trustedHome } from './state.mjs';
 import { maybeOpenWindow } from './window.mjs';
 
@@ -227,6 +228,8 @@ function expandGlob(pattern, budget) {
 }
 
 async function main() {
+  // This is the blackbrake program: it may change its own folder (src/guard/safety.mjs).
+  declareProgram();
   let native = process.argv[2];
   const harness = Object.hasOwn(ADAPTERS, argValue('--harness')) ? argValue('--harness') : 'claude';
   const adapter = ADAPTERS[harness];

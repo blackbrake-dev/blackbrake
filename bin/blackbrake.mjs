@@ -24,6 +24,7 @@ import { renderAdvice, renderAudit, renderDetails } from '../src/ui/audit-view.m
 import { confirm, confirmTyped, isInteractive, launchClaude, logLines, modeBadge, pausedBadge, statusLines, statusLineText } from '../src/guard/cli.mjs';
 import { requireHuman } from '../src/guard/human.mjs';
 import { isPaused } from '../src/guard/pause.mjs';
+import { declareProgram } from '../src/guard/safety.mjs';
 import { guardInstalled, setup, uninstall } from '../src/guard/install.mjs';
 import { getMode, getSavedLang, getSetting, hasMode, MODES, readLog, setMode, setSavedLang, setSetting } from '../src/guard/state.mjs';
 import { runningAgents, severity, watch } from '../src/guard/watch.mjs';
@@ -1174,6 +1175,8 @@ function help() {
 }
 
 async function main() {
+  // This is the blackbrake program: it may change its own folder (src/guard/safety.mjs).
+  declareProgram();
   let opts;
 
   try {

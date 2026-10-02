@@ -6,6 +6,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { assertNoLinks } from '../guard/install.mjs';
+import { mayChange } from '../guard/safety.mjs';
 import { guardHome, writePrivate } from '../guard/state.mjs';
 import { reportFileName } from './build.mjs';
 import { isReportFileName, LIMITS } from './validate.mjs';
@@ -95,7 +96,7 @@ export function deleteReport(name, { home = guardHome() } = {}) {
   try { st = fs.lstatSync(file); } catch { throw new ReportError('not-found'); }
 
   if (!st.isFile()) throw new ReportError('not-regular');
-  fs.rmSync(file);
+  fs.rmSync(mayChange(path.resolve(file)));
 }
 
 // Reports newest first, as { name, kind, date }. Anything else in the folder is left alone and not

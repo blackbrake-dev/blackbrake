@@ -242,7 +242,14 @@ test('a real process that looks like the watcher is found in the real process ta
 
     assert.equal(seen.length, 1, 'the process table lists the child');
     assert.equal(classify(seen[0].cmd), 'watcher', seen[0].cmd);
-    const r = stopKind('watcher', { list: () => only(listProcesses()) });
+
+    // The kill is injected and can only reach this child (src/guard/safety.mjs: tests never stop a real process).
+    const kill = (pid, sig) => {
+      assert.equal(pid, child.pid, 'only the test\'s own child');
+      process.kill(pid, sig);
+    };
+
+    const r = stopKind('watcher', { list: () => only(listProcesses()), kill });
 
     assert.deepEqual(r.found, [child.pid]);
     assert.deepEqual(r.remaining, []);

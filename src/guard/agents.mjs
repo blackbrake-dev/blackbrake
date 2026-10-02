@@ -14,6 +14,7 @@ import { t } from '../i18n.mjs';
 import { autostartInstalled } from './autostart.mjs';
 import { roamingDir } from './registry.mjs';
 import { appManifest, assertOwnFolder } from './install.mjs';
+import { mayChange } from './safety.mjs';
 
 export { appManifest };
 
@@ -103,6 +104,7 @@ function readConfig(file) {
 }
 
 function writeConfig(file, value, { home, id }) {
+  mayChange(path.resolve(file));
   // No link between the home folder and the config (a linked ~/.codex would send the write, and a
   // later uninstall, into whatever folder it points at).
   assertNoLinksBelow(file, os.homedir());
@@ -320,7 +322,7 @@ const copilot = {
     const hooks = stripOurs(config.hooks);
 
     if (Object.keys(hooks).length) writeConfig(file, { ...config, hooks }, { home, id: 'copilot' });
-    else fs.rmSync(file, { force: true });
+    else fs.rmSync(mayChange(path.resolve(file)), { force: true });
 
     return true;
   },

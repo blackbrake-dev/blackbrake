@@ -3,6 +3,9 @@
 import fs from 'node:fs';
 import { createPainter } from '../ui/term.mjs';
 import { statusLineText } from './cli.mjs';
+import { declareProgram } from './safety.mjs';
+
+declareProgram();
 
 let input = {};
 

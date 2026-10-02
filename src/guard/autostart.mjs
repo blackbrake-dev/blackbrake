@@ -13,6 +13,7 @@ import { isBackgroundRunning } from './background.mjs';
 import { assertNoLinks } from './install.mjs';
 import { loginItemFile } from './policy.mjs';
 import { bootoutLaunchAgent, stopBlackbrake } from './procs.mjs';
+import { mayChange, mayStop } from './safety.mjs';
 import { guardHome } from './state.mjs';
 import { systemProgram } from './window.mjs';
 
@@ -43,6 +44,7 @@ export const autostartInstalled = () => fs.existsSync(autostartFile());
 
 // Writes the login item and starts the watcher now (hidden), unless one is already running.
 export function installAutostart({ home = guardHome(), start = true, file = autostartFile() } = {}) {
+  mayChange(path.resolve(file));
   const content = autostartContent(process.execPath, watchScript(home));
 
   if (!content) throw new Error(`The paths to node or to blackbrake have characters a login item cannot hold safely: ${process.execPath}`);
@@ -113,6 +115,11 @@ export function isWatcherProcess(pid, { platform = process.platform, run = spawn
 // Returns whether the login item file was removed.
 export function removeAutostart({ home = guardHome(), file = autostartFile(), kill = true, sweep = false, windows = false, sweepOptions = {}, launchd = file === autostartFile(), onSweep = null } = {}) {
   let removed = false;
+
+  mayChange(path.resolve(file));
+
+  // Stopping processes without injected ones (sweepOptions.kill) is the program's job only.
+  if (kill) mayStop({ injected: Boolean(sweepOptions.kill) });
 
   try {
     const st = fs.lstatSync(file);

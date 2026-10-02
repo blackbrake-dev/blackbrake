@@ -9,6 +9,7 @@
 // No shell anywhere; pids are numbers; nothing leaves this machine.
 import { spawnSync } from 'node:child_process';
 import fs from 'node:fs';
+import { mayStop } from './safety.mjs';
 import { systemProgram } from './window.mjs';
 
 export const LAUNCH_AGENT_LABEL = 'dev.blackbrake.watch';
@@ -108,6 +109,7 @@ const pause = (ms) => { Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0
 // where the first signal already terminates) SIGKILL. Returns { found, remaining } with the pids
 // seen before and the pids a second sweep still sees.
 export function stopKind(kind, o = {}) {
+  mayStop({ injected: Boolean(o.kill) });
   const { platform = process.platform, kill = (pid, sig) => process.kill(pid, sig), sleep = pause, graceMs = 3000, stepMs = 250 } = o;
   const read = o.commandOf ?? ((pid) => commandOf(pid, o));
   const found = sweepOf(kind, o);
@@ -152,6 +154,7 @@ export function stopBlackbrake({ windows = true, ...o } = {}) {
 // in a system folder, no numeric user id). The program is /bin/launchctl, never one from PATH.
 export function bootoutLaunchAgent({ platform = process.platform, run = spawnSync, find = (n) => systemProgram(n, { platform }), uid = process.getuid?.() } = {}) {
   if (platform !== 'darwin' || !Number.isSafeInteger(uid) || uid < 0) return 'skipped';
+  mayStop({ injected: run !== spawnSync });
   const launchctl = find('launchctl');
 
   if (!launchctl) return 'skipped';

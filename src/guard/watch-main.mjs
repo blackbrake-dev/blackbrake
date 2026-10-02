@@ -62,6 +62,9 @@ if (changed?.length) {
   process.exit(1);
 }
 
+// This is the blackbrake program (the watcher or the alerts window): it may change its own folder.
+(await import('./safety.mjs')).declareProgram();
+
 const { detectLang, setLang } = await import('../i18n.mjs');
 
 const { createPainter } = await import('../ui/term.mjs');

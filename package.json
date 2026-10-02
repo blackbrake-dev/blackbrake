@@ -18,7 +18,7 @@
     "README.md"
   ],
   "scripts": {
-    "test": "node --test",
+    "test": "node scripts/test-sandbox.mjs",
     "build:rules": "node scripts/build-rules.mjs"
   },
   "engines": {
