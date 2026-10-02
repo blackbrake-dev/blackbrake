@@ -66,12 +66,19 @@ export function assertNoLinks(target) {
 // a recursive delete land elsewhere), not the home folder, not a drive or filesystem root.
 export function assertOwnFolder(dir) {
   const abs = mayChange(path.resolve(dir));
-  // By real path too: an 8.3 short name (C:\Users\ALUCE~1), a \\?\ prefix or a trailing dot names
-  // the home folder without spelling it (review C, 2026-10-01).
-  // The same folder on disk (device and file id) is the same folder whatever it is called.
-  const id = (p) => { try { const st = fs.statSync(p, { bigint: true });
 
- return `${st.dev}:${st.ino}`; } catch { return null; } };
+  // An 8.3 short name (C:\Users\ALUCE~1), a \\?\ prefix or a trailing dot names the home folder
+  // without spelling it (review C, 2026-10-01). The same folder on disk (device and file id) is the
+  // same folder whatever it is called.
+  const id = (p) => {
+    try {
+      const st = fs.statSync(p, { bigint: true });
+
+      return `${st.dev}:${st.ino}`;
+    } catch {
+      return null;
+    }
+  };
 
   const norm = (p) => path.resolve(p).replace(/^\\\\\?\\/, '').replace(/[. ]+$/, '').toLowerCase();
   const places = [os.homedir(), path.parse(abs).root, path.dirname(os.homedir())];
