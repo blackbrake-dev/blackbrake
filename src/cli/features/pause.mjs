@@ -98,19 +98,21 @@ export async function runPause(p, { by = 'cli', io = {}, deps = realDeps(), prin
   // The mark first: from here on every hook answers neutrally and anything that starts exits.
   deps.setPaused(by, targets.map((x) => x.id));
   const sweep = deps.stop();
-  const watchers = sweep?.watchers?.remaining ?? deps.watchers();
-  const windows = sweep?.windows?.remaining ?? deps.windows();
+  // null: the process table could not be read. Never shown as "stopped" (review C, 2026-10-01).
+  const watchers = sweep ? sweep.watchers?.remaining ?? null : deps.watchers();
+  const windows = sweep ? sweep.windows?.remaining ?? null : deps.windows();
   const loginItem = deps.loginItem();
   const out = ['', `  ${pausedBadge(p)} ${p.bold(p.cream(t('blackbrake is paused')))}`];
+  const unknown = (text) => bad(p, text, t('The list of processes could not be read: check it yourself.'));
 
   out.push(ok(p, t('Hooks: paused (still installed in: {list})', { list: targets.map((x) => x.name).join(', ') })));
-  out.push(...(watchers.length ? bad(p, t('Watcher: still running (pid {pids})', { pids: pidsOf(watchers).join(', ') }), t('Close it by hand: {cmd}', { cmd: killHint(pidsOf(watchers)) })) : [ok(p, t('Watcher: stopped'))]));
+  out.push(...(watchers === null ? unknown(t('Watcher: could not check')) : watchers.length ? bad(p, t('Watcher: still running (pid {pids})', { pids: pidsOf(watchers).join(', ') }), t('Close it by hand: {cmd}', { cmd: killHint(pidsOf(watchers)) })) : [ok(p, t('Watcher: stopped'))]));
   out.push(...(loginItem ? bad(p, t('Login item: still there'), t('Run "blackbrake pause" again, or "blackbrake background off".')) : [ok(p, t('Login item: removed (comes back when you resume)'))]));
-  out.push(...(windows.length ? bad(p, t('Alerts window: still open (pid {pids})', { pids: pidsOf(windows).join(', ') }), t('Close it by hand: {cmd}', { cmd: killHint(pidsOf(windows)) })) : [ok(p, t('Alerts window: closed'))]));
+  out.push(...(windows === null ? unknown(t('Alerts window: could not check')) : windows.length ? bad(p, t('Alerts window: still open (pid {pids})', { pids: pidsOf(windows).join(', ') }), t('Close it by hand: {cmd}', { cmd: killHint(pidsOf(windows)) })) : [ok(p, t('Alerts window: closed'))]));
   out.push('', `  ${p.amber(t('You are not protected until you run "blackbrake resume".'))}`, '');
   print(out);
 
-  return watchers.length || windows.length || loginItem ? 1 : 0;
+  return watchers === null || windows === null || watchers.length || windows.length || loginItem ? 1 : 0;
 }
 
 // ---------- resume ----------
@@ -167,8 +169,13 @@ export async function runResume(p, { deps = realDeps(), print = defaultPrint } =
   }
 
   if (!wanted) out.push(`  ${p.faint('·')} ${p.faint(t('Watcher: off (your choice; "blackbrake background on" turns it on)'))}`);
-  else if (deps.watchers().length) out.push(ok(p, t('Watcher: running')));
-  else out.push(...bad(p, t('Watcher: not running yet'), t('It starts at your next login, or now with "blackbrake background on".')));
+  else {
+    const live = deps.watchers();
+
+    if (live === null) out.push(...bad(p, t('Watcher: could not check'), t('The list of processes could not be read: check it yourself.')));
+    else if (live.length) out.push(ok(p, t('Watcher: running')));
+    else out.push(...bad(p, t('Watcher: not running yet'), t('It starts at your next login, or now with "blackbrake background on".')));
+  }
 
   print([...out, '']);
 

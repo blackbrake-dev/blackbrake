@@ -66,9 +66,18 @@ export function assertNoLinks(target) {
 // a recursive delete land elsewhere), not the home folder, not a drive or filesystem root.
 export function assertOwnFolder(dir) {
   const abs = mayChange(path.resolve(dir));
-  const forbidden = [os.homedir(), path.parse(abs).root, path.dirname(os.homedir())].map((p) => path.resolve(p).toLowerCase());
+  // By real path too: an 8.3 short name (C:\Users\ALUCE~1), a \\?\ prefix or a trailing dot names
+  // the home folder without spelling it (review C, 2026-10-01).
+  // The same folder on disk (device and file id) is the same folder whatever it is called.
+  const id = (p) => { try { const st = fs.statSync(p, { bigint: true });
 
-  if (forbidden.includes(abs.toLowerCase())) throw new Error(`Refusing to use ${abs} as blackbrake's folder.`);
+ return `${st.dev}:${st.ino}`; } catch { return null; } };
+
+  const norm = (p) => path.resolve(p).replace(/^\\\\\?\\/, '').replace(/[. ]+$/, '').toLowerCase();
+  const places = [os.homedir(), path.parse(abs).root, path.dirname(os.homedir())];
+  const own = id(abs);
+
+  if (places.map(norm).includes(norm(abs)) || (own && places.map(id).includes(own))) throw new Error(`Refusing to use ${abs} as blackbrake's folder.`);
 
   assertNoLinks(abs);
 
@@ -258,7 +267,8 @@ export function uninstall({ keepLog = true, log = () => {} } = {}) {
       if (fs.existsSync(p) && !fs.lstatSync(p).isSymbolicLink()) fs.rmSync(p, { recursive: true, force: true });
     }
 
-    fs.rmdirSync(home);
+    // Already gone (a second purge, or removed by hand) is fine: the verification screen follows.
+    try { fs.rmdirSync(home); } catch (e) { if (e.code !== 'ENOENT') throw e; }
   }
 
   log(keepLog ? t('Kept your guard log in {dir}', { dir: path.join(home, 'log') }) : t('Deleted {dir}', { dir: home }));

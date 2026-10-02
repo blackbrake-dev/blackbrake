@@ -465,6 +465,7 @@ async function main() {
       }
 
       try { appendLog(tampering.map((e) => ({ ...e, mode, harness })), input.session_id, home); } catch { /* the denial still applies */ }
+
       emit(adapter.render(event, output, { native: nativeEvent, input }));
 
       return;

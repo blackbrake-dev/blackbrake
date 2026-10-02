@@ -6,17 +6,22 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { isWatchRunning } from './watch.mjs';
+import { classify } from './classify.mjs';
 // A paused blackbrake opens nothing (the mark's tolerant reading is in pause.mjs).
 import { isPaused } from './pause.mjs';
 import { getSession, getSetting, guardHome, setSession } from './state.mjs';
 
 // Programs are taken from fixed system folders, never from the agent's PATH (a repository can put
 // its own "wt.exe" or "xterm" first in it).
-// Windows Terminal's wt.exe is an app execution alias: lstat sees it, stat cannot follow it.
+// Windows Terminal's wt.exe is an app execution alias: lstat sees it (a link), stat cannot follow it.
+// WindowsApps is writable by the user, and so by an agent: there only an alias counts, never a plain
+// file someone put there (review C, 2026-10-01: a planted wt.exe was run by blackbrake itself).
 const exists = (file) => {
-  try { return fs.statSync(file).isFile(); } catch { /* maybe an alias */ }
+  if (/[\\/]WindowsApps[\\/][^\\/]+\.exe$/i.test(file)) {
+    try { return fs.lstatSync(file).isSymbolicLink(); } catch { return false; }
+  }
 
-  try { return fs.lstatSync(file).isSymbolicLink() || /[\\/]WindowsApps[\\/][^\\/]+\.exe$/i.test(file); } catch { return false; }
+  try { return fs.statSync(file).isFile(); } catch { return false; }
 };
 
 export function systemProgram(name, { platform = process.platform, env = process.env, has = exists, home = os.homedir } = {}) {
@@ -73,7 +78,14 @@ export function windowCommand(node, cli, { platform = process.platform, find = (
 const TERMINAL_ENV = /^(PATH|Path|SystemRoot|SystemDrive|windir|ComSpec|TEMP|TMP|TMPDIR|USERPROFILE|HOMEDRIVE|HOMEPATH|APPDATA|LOCALAPPDATA|PROGRAMDATA|ProgramFiles|ProgramFiles\(x86\)|PATHEXT|CommonProgramFiles|CommonProgramFiles\(x86\)|PUBLIC|ALLUSERSPROFILE|USERNAME|USERDOMAIN|COMPUTERNAME|NUMBER_OF_PROCESSORS|PROCESSOR_ARCHITECTURE|OS|HOME|USER|LOGNAME|SHELL|LANG|LANGUAGE|LC_[A-Z]+|DISPLAY|WAYLAND_DISPLAY|XAUTHORITY|DBUS_SESSION_BUS_ADDRESS|XDG_RUNTIME_DIR|XDG_CONFIG_HOME|XDG_DATA_HOME|__CF_USER_TEXT_ENCODING|WT_SESSION|WT_PROFILE_ID|COLORTERM|TERM_PROGRAM|ACCESSIBLE|BLACKBRAKE_LANG)$/i;
 
 export function windowEnv(env = process.env, home = null) {
-  const out = Object.fromEntries(Object.entries(env).filter(([k]) => TERMINAL_ENV.test(k)));
+  const out = Object.fromEntries(Object.entries(env).filter(([k]) => TERMINAL_ENV.test(k) && !/^(HOME|XDG_CONFIG_HOME|XDG_DATA_HOME)$/i.test(k)));
+
+  // The folders where a terminal reads its own configuration (which can start programs) come from
+  // the account itself, never from the agent's environment (review C, 2026-10-01): a repository's
+  // settings could otherwise point HOME or XDG_CONFIG_HOME at a planted terminal config.
+  if (process.platform !== 'win32') {
+    try { out.HOME = os.userInfo().homedir; } catch { /* the terminal falls back to its default */ }
+  }
 
   if (home) out.BLACKBRAKE_HOME = home;
 
@@ -83,7 +95,9 @@ export function windowEnv(env = process.env, home = null) {
 // An alerts window is `watch-main.mjs` without --background. It names itself 'blackbrake watch'
 // (process.title), which on Linux and macOS replaces the command line the process table shows; the
 // background watcher is 'blackbrake watcher'. The title must lead the command line.
-const WINDOW = (cmd) => /^blackbrake watch(?![\w-])/.test(cmd) || (/watch-main\.mjs/.test(cmd) && !/--background/.test(cmd));
+// Strict: the process must BE node running watch-main.mjs, not merely mention it (src/guard/classify.mjs;
+// review C: a decoy that named the file kept the alerts window from opening).
+const WINDOW = (cmd) => classify(cmd) === 'window';
 
 // Whether another alerts window is already open for this user, whichever guard folder it uses (a
 // copy run from a checkout or a relocated BLACKBRAKE_HOME keeps its pid file elsewhere, so the

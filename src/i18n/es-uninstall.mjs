@@ -42,4 +42,6 @@ export const ES = {
   'Your data is deleted: {dir}': 'Tus datos están borrados: {dir}',
   'Your data is kept in {dir}': 'Tus datos se conservan en {dir}',
   'Last step, in your terminal: npm uninstall -g blackbrake': 'Último paso, en tu terminal: npm uninstall -g blackbrake',
+  'Background watcher: could not check (the list of processes could not be read)': 'Vigilante en segundo plano: no se ha podido comprobar (no se ha podido leer la lista de procesos)',
+  'Alerts windows: could not check (the list of processes could not be read)': 'Ventanas de alertas: no se ha podido comprobar (no se ha podido leer la lista de procesos)',
 };

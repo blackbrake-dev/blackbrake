@@ -198,6 +198,16 @@ test('pause: a watcher that survives is reported with the command to close it, e
   assert.match(out, /(taskkill \/PID 4001 \/F|kill 4001)/);
 });
 
+test('pause: when the process list cannot be read, it says "could not check", never "stopped" (exit 1)', async () => {
+  const m = machine();
+  m.deps.stop = () => ({ watchers: { found: null, remaining: null }, windows: { found: null, remaining: null }, launchd: 'skipped' });
+  const { code, out } = await pause(m, terminal({ typed: 'pause' }));
+  assert.equal(code, 1);
+  assert.match(out, /✗ Watcher: could not check/);
+  assert.match(out, /✗ Alerts window: could not check/);
+  assert.doesNotMatch(out, /Watcher: stopped|Alerts window: closed/);
+});
+
 test('pause with nothing installed says so and asks nothing', async () => {
   const m = machine({ installed: [] });
   const { code, out } = await pause(m, terminal({ typed: 'pause' }));

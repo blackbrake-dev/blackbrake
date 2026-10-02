@@ -10,6 +10,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { isBackgroundRunning } from './background.mjs';
+import { classify } from './classify.mjs';
 import { assertNoLinks } from './install.mjs';
 import { loginItemFile } from './policy.mjs';
 import { bootoutLaunchAgent, stopBlackbrake } from './procs.mjs';
@@ -27,7 +28,8 @@ const xml = (s) => s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, 
 
 export function autostartContent(node, script, platform = process.platform) {
   // VBScript doubles its quotes; the others must not see quotes, $, backslashes (Linux) at all.
-  if (/["\r\n]/.test(node + script) || (platform !== 'win32' && platform !== 'darwin' && UNSAFE.test(node + script))) return null;
+  // Windows Script Host expands %VAR% inside Run (review C, 2026-10-01): no '%' on Windows either.
+  if (/["\r\n]/.test(node + script) || (platform === 'win32' && script.includes('%')) || (platform !== 'win32' && platform !== 'darwin' && UNSAFE.test(node + script))) return null;
 
   if (platform === 'win32') return `' blackbrake: background watcher for your AI agents (remove with "blackbrake uninstall")\r\nCreateObject("WScript.Shell").Run """${node}"" ""${script}"" --background", 0, False\r\n`;
 
@@ -79,7 +81,8 @@ export function installAutostart({ home = guardHome(), start = true, file = auto
 // the argument area, so /proc and ps show the title instead of the script path: both count. The
 // alerts window ('blackbrake watch') does not, nor a program that merely has it as an argument: the
 // title leads the whole command line. This decides whether uninstall may kill a pid.
-const WATCHER = /watch-main\.mjs|^blackbrake watcher(?![\w-])/;
+// Strict: the process must BE node running watch-main.mjs --background (src/guard/classify.mjs).
+const WATCHER = { test: (cmd) => classify(cmd) === 'watcher' };
 
 export function isWatcherProcess(pid, { platform = process.platform, run = spawnSync, read = fs.readFileSync, find = systemProgram } = {}) {
   try {
@@ -97,7 +100,7 @@ export function isWatcherProcess(pid, { platform = process.platform, run = spawn
     const pwsh = systemProgram('powershell.exe', { platform });
     const q = pwsh && run(pwsh, ['-NoProfile', '-NonInteractive', '-Command', `(Get-CimInstance Win32_Process -Filter "ProcessId=${Number(pid)}").CommandLine`], { encoding: 'utf8', windowsHide: true, timeout: 10000 });
 
-    return Boolean(q) && String(q.stdout).includes('watch-main.mjs');
+    return Boolean(q) && WATCHER.test(String(q.stdout).trim());
   } catch {
     return false;
   }

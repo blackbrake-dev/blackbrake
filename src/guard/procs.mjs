@@ -9,36 +9,14 @@
 // No shell anywhere; pids are numbers; nothing leaves this machine.
 import { spawnSync } from 'node:child_process';
 import fs from 'node:fs';
+import { classify } from './classify.mjs';
 import { mayStop } from './safety.mjs';
 import { systemProgram } from './window.mjs';
 
 export const LAUNCH_AGENT_LABEL = 'dev.blackbrake.watch';
 
-// process.title of the watcher and of the alerts window: on Linux and macOS it rewrites the
-// arguments, so the process table then shows the title instead of the script path.
-const WATCHER_TITLE = /^blackbrake watcher(?![\w-])/;
-
-const WINDOW_TITLE = /^blackbrake watch(?![\w-])/;
-
-// "node … <something>/src/guard/watch-main.mjs [arguments]": a node program running blackbrake's
-// own file. Anything else that merely names the file is not ours.
-const NODE_SCRIPT = /(?:^|[\x5c/"\s])node(?:js)?(?:\.exe)?"?\s.*?[\x5c/]src[\x5c/]guard[\x5c/]watch-main\.mjs"?(.*)$/i;
-
-const BACKGROUND = /(?:^|\s)--background(?:\s|$)/;
-
-// 'watcher', 'window' or null for one command line.
-export function classify(cmd) {
-  const c = String(cmd ?? '').trim();
-
-  if (WATCHER_TITLE.test(c)) return 'watcher';
-
-  if (WINDOW_TITLE.test(c)) return 'window';
-  const m = c.match(NODE_SCRIPT);
-
-  if (!m) return null;
-
-  return BACKGROUND.test(m[1]) ? 'watcher' : 'window';
-}
+// 'watcher', 'window' or null for one command line: the one strict rule (src/guard/classify.mjs).
+export { classify };
 
 const PS_LIST = 'Get-CimInstance Win32_Process -Filter "Name=\'node.exe\'" | ForEach-Object { "$($_.ProcessId)`t$($_.CommandLine)" }';
 
@@ -47,7 +25,8 @@ const lines = (text) => String(text ?? '').replace(/\t/g, ' ').split(/\r?\n/).ma
 const flat = (s) => String(s).replace(/\0+/g, ' ').trim();
 
 // Every process the system lists, as { pid, cmd }, without this one. On Windows only node.exe
-// (everything of ours is node). Unable to tell = an empty list.
+// (everything of ours is node). Unable to tell = null, never an empty list: "I could not look" must
+// not read as "nothing is running" (review C, 2026-10-01: pause and uninstall said "stopped").
 export function listProcesses({ platform = process.platform, run = spawnSync, find = (n) => systemProgram(n, { platform }), readdir = fs.readdirSync, read = fs.readFileSync, self = process.pid } = {}) {
   try {
     let all;
@@ -59,16 +38,16 @@ export function listProcesses({ platform = process.platform, run = spawnSync, fi
     } else {
       const ps = find(platform === 'win32' ? 'powershell.exe' : 'ps');
 
-      if (!ps) return [];
+      if (!ps) return null;
       const r = platform === 'win32' ? run(ps, ['-NoProfile', '-NonInteractive', '-Command', PS_LIST], { encoding: 'utf8', windowsHide: true, timeout: 15000 }) : run(ps, ['-axo', 'pid=,command='], { encoding: 'utf8', timeout: 10000, maxBuffer: 8 * 1024 * 1024 });
 
-      if (r.status !== 0) return [];
+      if (r.status !== 0) return null;
       all = lines(r.stdout);
     }
 
     return all.filter((x) => x.pid !== self);
   } catch {
-    return [];
+    return null;
   }
 }
 
@@ -94,9 +73,14 @@ export function commandOf(pid, { platform = process.platform, run = spawnSync, f
   }
 }
 
-const sweepOf = (kind, o) => (o.list ?? (() => listProcesses(o)))()
-  .filter((x) => validPid(x.pid) && x.pid > 1 && x.pid !== (o.self ?? process.pid) && classify(x.cmd) === kind)
-  .map((x) => x.pid);
+// The pids of one kind, or null when the process table could not be read.
+const sweepOf = (kind, o) => {
+  const all = (o.list ?? (() => listProcesses(o)))();
+
+  if (!Array.isArray(all)) return null;
+
+  return all.filter((x) => validPid(x.pid) && x.pid > 1 && x.pid !== (o.self ?? process.pid) && classify(x.cmd) === kind).map((x) => x.pid);
+};
 
 export const findWatchers = (o = {}) => sweepOf('watcher', o);
 
@@ -123,15 +107,18 @@ export function stopKind(kind, o = {}) {
     }
   };
 
+  // The table could not be read: nothing is signalled and the caller must say "could not check".
+  if (found === null) return { found: null, remaining: null };
+
   signal(found, 'SIGTERM');
   let left = found;
 
-  for (let waited = 0; left.length && waited < graceMs; waited += stepMs) {
+  for (let waited = 0; left?.length && waited < graceMs; waited += stepMs) {
     sleep(stepMs);
     left = sweepOf(kind, o);
   }
 
-  if (left.length && platform !== 'win32') {
+  if (left?.length && platform !== 'win32') {
     signal(left, 'SIGKILL');
     sleep(stepMs);
     left = sweepOf(kind, o);

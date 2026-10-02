@@ -4,6 +4,9 @@
 // the last one starts a real process and stops it.
 import assert from 'node:assert/strict';
 import { spawn } from 'node:child_process';
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
 import { test } from 'node:test';
 import { bootoutLaunchAgent, classify, commandOf, findWatchers, findWindows, listProcesses, stopBlackbrake, stopKind } from '../src/guard/procs.mjs';
 
@@ -83,13 +86,20 @@ test('listProcesses asks Windows for node.exe through PowerShell from the system
   assert.equal(classify(list[0].cmd), 'watcher');
 });
 
-test('listProcesses answers an empty list when it cannot tell', () => {
+// Review C (2026-10-01): "could not look" used to be an empty list, so pause and uninstall said
+// "stopped" without knowing. Now it is null all the way up, and nothing is signalled.
+test('listProcesses answers null (not an empty list) when it cannot tell, and the sweep says so', () => {
   const boom = () => { throw new Error('boom'); };
 
-  assert.deepEqual(listProcesses({ platform: 'darwin', find: () => null }), []);
-  assert.deepEqual(listProcesses({ platform: 'darwin', find: () => '/bin/ps', run: boom }), []);
-  assert.deepEqual(listProcesses({ platform: 'darwin', find: () => '/bin/ps', run: () => ({ status: 1, stdout: '1 x' }) }), []);
-  assert.deepEqual(listProcesses({ platform: 'linux', readdir: boom }), []);
+  assert.equal(listProcesses({ platform: 'darwin', find: () => null }), null);
+  assert.equal(listProcesses({ platform: 'darwin', find: () => '/bin/ps', run: boom }), null);
+  assert.equal(listProcesses({ platform: 'darwin', find: () => '/bin/ps', run: () => ({ status: 1, stdout: '1 x' }) }), null);
+  assert.equal(listProcesses({ platform: 'linux', readdir: boom }), null);
+  assert.equal(findWatchers({ list: () => null }), null);
+  assert.equal(findWindows({ list: () => null }), null);
+  const killed = [];
+  assert.deepEqual(stopKind('watcher', { list: () => null, kill: (pid) => killed.push(pid) }), { found: null, remaining: null });
+  assert.deepEqual(killed, [], 'nothing is signalled when the table cannot be read');
 });
 
 test('commandOf reads one process and returns null when it is gone', () => {
@@ -229,8 +239,12 @@ test('bootoutLaunchAgent runs launchctl bootout for the user domain on macOS onl
 });
 
 test('a real process that looks like the watcher is found in the real process table and stopped', { timeout: 90000 }, () => {
-  const args = ['-e', 'setInterval(function(){},1000)', 'x/src/guard/watch-main.mjs', '--background'];
-  const child = spawn(process.execPath, args, { stdio: 'ignore', windowsHide: true, env: { ...process.env, BLACKBRAKE_NO_WINDOW: '1' } });
+  // A stand-in that IS node running a file called …/src/guard/watch-main.mjs (in a temporary folder):
+  // only a real run of that file counts as the watcher, a mention does not (src/guard/classify.mjs).
+  const dir = path.join(fs.mkdtempSync(path.join(os.tmpdir(), 'bb-procs-real-')), 'src', 'guard');
+  fs.mkdirSync(dir, { recursive: true });
+  fs.writeFileSync(path.join(dir, 'watch-main.mjs'), 'setInterval(() => {}, 1000);\n');
+  const child = spawn(process.execPath, [path.join(dir, 'watch-main.mjs'), '--background'], { stdio: 'ignore', windowsHide: true, env: { ...process.env, BLACKBRAKE_NO_WINDOW: '1' } });
   // Only this child: a real watcher of the person running the tests must survive the test.
   const only = (list) => list.filter((x) => x.pid === child.pid);
 

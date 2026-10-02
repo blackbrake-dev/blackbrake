@@ -40,4 +40,7 @@ export const ES = {
   'blackbrake is paused; run "blackbrake resume" first.': 'blackbrake está pausado; ejecuta antes "blackbrake resume".',
   'blackbrake is PAUSED: only attempts to switch it off are checked; secrets and spend are not. Resume it in your terminal with "blackbrake resume".': 'blackbrake está PAUSADO: solo se vigilan los intentos de desactivarlo; los secretos y el gasto no. Reanúdalo en tu terminal con "blackbrake resume".',
   'blackbrake is paused: nothing is being watched. This window closes now; "blackbrake resume" turns it back on.': 'blackbrake está pausado: no se vigila nada. Esta ventana se cierra ahora; "blackbrake resume" la vuelve a activar.',
+  'Watcher: could not check': 'Vigilante: no se ha podido comprobar',
+  'Alerts window: could not check': 'Ventana de alertas: no se ha podido comprobar',
+  'The list of processes could not be read: check it yourself.': 'No se ha podido leer la lista de procesos: compruébalo tú.',
 };

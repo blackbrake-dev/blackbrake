@@ -100,9 +100,9 @@ function planLines(p, { names, hasClaude, info, all }) {
 
   if (all) {
     if (info.loginItem.present) out.push(bullet(t('The login item: {path}', { path: clean(info.loginItem.path, 200) })));
-    out.push(bullet(t(info.watchers.length ? 'Background watcher: running' : 'Background watcher: not running')));
+    out.push(bullet(t(info.watchers === null ? 'Background watcher: could not check (the list of processes could not be read)' : info.watchers.length ? 'Background watcher: running' : 'Background watcher: not running')));
 
-    if (info.windows.length) out.push(bullet(t('Alerts windows open: {n}', { n: info.windows.length })));
+    if (info.windows?.length) out.push(bullet(t('Alerts windows open: {n}', { n: info.windows.length })));
   }
 
   if (info.app.present) out.push(bullet(t('The shared copy in {dir}', { dir: clean(info.app.path, 200) })));
@@ -166,10 +166,13 @@ function finalLines(p, { ids, names, all, purge, before, after, sweep }) {
     const w = sweep?.watchers ?? { found: after.watchers, remaining: after.watchers };
     const wi = sweep?.windows ?? { found: [], remaining: after.windows };
 
-    if (w.remaining.length) bad(t('Background watcher: still running (pid {pids}): close it by hand ({cmd})', { pids: w.remaining.join(', '), cmd: killHint(w.remaining) }));
+    // "Could not check" is never shown as stopped (review C: an unreadable process table said so).
+    if (w.remaining === null || w.found === null) bad(t('Background watcher: could not check (the list of processes could not be read)'));
+    else if (w.remaining.length) bad(t('Background watcher: still running (pid {pids}): close it by hand ({cmd})', { pids: w.remaining.join(', '), cmd: killHint(w.remaining) }));
     else good(t(w.found.length ? 'Background watcher: stopped' : 'Background watcher: not running'));
 
-    if (wi.remaining.length) bad(t('Alerts windows: still open (pid {pids}): close them by hand ({cmd})', { pids: wi.remaining.join(', '), cmd: killHint(wi.remaining) }));
+    if (wi.remaining === null || wi.found === null) bad(t('Alerts windows: could not check (the list of processes could not be read)'));
+    else if (wi.remaining.length) bad(t('Alerts windows: still open (pid {pids}): close them by hand ({cmd})', { pids: wi.remaining.join(', '), cmd: killHint(wi.remaining) }));
     else if (wi.found.length) good(t('Alerts windows: closed ({n})', { n: wi.found.length }));
 
     if (sweep?.launchd === 'failed') bad(t('launchd would not let go of the login item: run "{cmd}" in your terminal', { cmd: `launchctl bootout gui/${process.getuid?.() ?? '<uid>'}/dev.blackbrake.watch` }));
