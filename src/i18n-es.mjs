@@ -1,5 +1,12 @@
 // Spanish (Spain) interface text. Key: the English text as written in the code.
 // Conventions: tuteo, sentence case, "clave" for key/secret value, "complemento" for add-on.
+import * as scaffold from './i18n/es-scaffold.mjs';
+import * as pause from './i18n/es-pause.mjs';
+import * as windowText from './i18n/es-window.mjs';
+import * as report from './i18n/es-report.mjs';
+import * as uninstall from './i18n/es-uninstall.mjs';
+import * as brakes from './i18n/es-brakes.mjs';
+
 export const ES = {
   'blackbrake guard · PROTECT: risky actions are checked before execution. Prompt blocking and output redaction depend on the agent\'s hook capabilities.': 'blackbrake guard · PROTEGER: las acciones de riesgo se revisan antes de ejecutarse. El bloqueo de mensajes y la ocultación de salidas dependen de los ganchos del agente.',
   'blackbrake withheld this result because encoded credentials could not be safely redacted.': 'blackbrake ocultó este resultado porque no pudo enmascarar las credenciales codificadas con seguridad.',
@@ -637,6 +644,22 @@ export const ES = {
   'Agents running': 'Agentes en marcha',
   'High and maximum alerts also raise a system notification. Ctrl+C to close.': 'Las alertas altas y máximas también lanzan una notificación del sistema. Ctrl+C para cerrar.',
   'No alerts in the last hour. New ones appear here as they happen.': 'Sin alertas en la última hora. Las nuevas aparecerán aquí según ocurran.',
+  'blackbrake: the same call was requested 3 times in 2 minutes. It may be a loop; continue?': 'blackbrake: se ha solicitado la misma llamada 3 veces en 2 minutos. Puede ser un bucle; ¿continuar?',
+  'blackbrake: this episode is at API≈${cost} across {responses} responses; above your local p90 API≈${p90} for this agent (median API≈${median}; {episodes} episodes, list prices).': 'blackbrake: este episodio lleva API≈${cost} en {responses} respuestas; supera tu p90 local API≈${p90} para este agente (mediana API≈${median}; {episodes} episodios, precios de lista).',
+  'Continue?': '¿Continuar?',
+  'Warning: review whether to continue.': 'Aviso: revisa si quieres continuar.',
+  'episode above your local cost p90': 'episodio por encima de tu p90 local de coste',
+  'repeated tool call': 'llamada de herramienta repetida',
+  'episode above your local token p90': 'episodio por encima de tu p90 local de tokens',
+  'This Codex episode is at {tokens} tokens; your p90 is {p90}.': 'Este episodio de Codex lleva {tokens} tokens; tu p90 es {p90}.',
+  'Codex {window} usage reached {percent}% (alert at {threshold}%). Check your remaining quota.': 'El uso de Codex en la ventana {window} ha llegado al {percent}% (aviso al {threshold}%). Consulta la cuota restante.',
+  '5-hour': 'de 5 horas',
+  weekly: 'semanal',
+  'Codex quota threshold reached': 'umbral de cuota de Codex alcanzado',
+  'new or changed agent add-ons': 'complementos del agente nuevos o modificados',
+  'Spend': 'Gasto',
+  '{n} local episodes · median API≈${median} · p90 API≈${p90}': '{n} episodios locales · mediana API≈${median} · p90 API≈${p90}',
+  'fewer than 30 local Claude Code episodes · no cost threshold': 'menos de 30 episodios locales de Claude Code · sin umbral de coste',
   'Live alerts from running agents': 'Alertas en directo de los agentes en marcha',
   '{n} agent(s) running now': '{n} agente(s) en marcha ahora',
   'low to maximum, as they happen': 'de bajo a máximo, según ocurren',
@@ -664,3 +687,21 @@ export const ES_PATTERNS = [
   [/^kept in (.+)$/, ([s], tr) => `conservada en ${tr(s)}`],
   [/^project config \((.+)\)$/, 'configuración del proyecto ($1)'],
 ];
+
+// Text that belongs to one feature lives in src/i18n/es-<name>.mjs (`export const ES = { 'English': 'Español' }`,
+// optionally `ES_PATTERNS`) and is merged here at load, so a feature never edits the big table above.
+// A key that already exists is never overridden.
+// To add a file: import it above and list it in FEATURE_TEXTS (test/scaffold.test.mjs fails if a
+// src/i18n/es-*.mjs file is missing from this list). The list is static on purpose: the guard test
+// forbids computed dynamic imports, and static imports cost less at each hook start.
+export const FEATURE_TEXTS = [scaffold, pause, report, uninstall, windowText, brakes];
+
+export function mergeFeatureTranslations(modules, target = ES, patterns = ES_PATTERNS) {
+  for (const mod of modules) {
+    for (const [k, v] of Object.entries(mod.ES ?? {})) if (v === `${v}` && k !== '__proto__' && !Object.hasOwn(target, k)) target[k] = v;
+
+    for (const pattern of mod.ES_PATTERNS ?? []) if (Array.isArray(pattern) && pattern[0] instanceof RegExp) patterns.push(pattern);
+  }
+}
+
+mergeFeatureTranslations(FEATURE_TEXTS);

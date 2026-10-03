@@ -2,6 +2,7 @@
 // reads is translated. The English text is the key: a missing translation shows English, never a
 // blank. Dynamic phrases ("runs 3 hook commands") are matched by pattern.
 import { ES, ES_PATTERNS } from './i18n-es.mjs';
+import { isFunction } from './kinds.mjs';
 
 export const LANGS = ['en', 'es'];
 
@@ -36,7 +37,7 @@ export function t(text, vars = {}) {
   // A pattern's replacement may be a function that gets the captured parts and t() itself, so a
   // variable part that is also known text ("stored in prompt history") is translated too.
   for (const [re, out] of ES_PATTERNS) {
-    if (re.test(text)) return fill(typeof out === 'function' ? text.replace(re, (...g) => out(g.slice(1, -2), t)) : text.replace(re, out), vars);
+    if (re.test(text)) return fill(isFunction(out) ? text.replace(re, (...g) => out(g.slice(1, -2), t)) : text.replace(re, out), vars);
   }
 
   return fill(text, vars);

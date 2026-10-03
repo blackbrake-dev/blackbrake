@@ -14,10 +14,12 @@ import { t } from '../i18n.mjs';
 import { autostartInstalled } from './autostart.mjs';
 import { roamingDir } from './registry.mjs';
 import { appManifest, assertOwnFolder } from './install.mjs';
+import { mayChange } from './safety.mjs';
 
 export { appManifest };
 
 import { getMode, guardHome, hasMode, setMode } from './state.mjs';
+import { isRecord } from '../kinds.mjs';
 
 const PKG_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..');
 
@@ -95,13 +97,14 @@ function readConfig(file) {
   try {
     const value = JSON.parse(text);
 
-    if (value && typeof value === 'object' && !Array.isArray(value)) return value;
+    if (isRecord(value)) return value;
   } catch { /* reported below */ }
 
   throw new Error(t('{file} is not valid JSON; blackbrake will not change it. Fix it and run setup again.', { file }));
 }
 
 function writeConfig(file, value, { home, id }) {
+  mayChange(path.resolve(file));
   // No link between the home folder and the config (a linked ~/.codex would send the write, and a
   // later uninstall, into whatever folder it points at).
   assertNoLinksBelow(file, os.homedir());
@@ -269,7 +272,7 @@ const cursor = flatAgent({
   name: 'Cursor',
   dir: () => path.join(os.homedir(), '.cursor'),
   file: () => path.join(os.homedir(), '.cursor', 'hooks.json'),
-  events: ['beforeSubmitPrompt', 'beforeShellExecution', 'beforeReadFile', 'beforeMCPExecution', 'preToolUse', 'postToolUse', 'preCompact'],
+  events: ['sessionStart', 'beforeSubmitPrompt', 'beforeShellExecution', 'beforeReadFile', 'beforeMCPExecution', 'preToolUse', 'postToolUse', 'preCompact'],
   handler: (hook, event) => ({ command: `node ${quoted(hook)} ${event} --harness cursor`, timeout: 30 }),
   base: { version: 1 },
 });
@@ -319,7 +322,7 @@ const copilot = {
     const hooks = stripOurs(config.hooks);
 
     if (Object.keys(hooks).length) writeConfig(file, { ...config, hooks }, { home, id: 'copilot' });
-    else fs.rmSync(file, { force: true });
+    else fs.rmSync(mayChange(path.resolve(file)), { force: true });
 
     return true;
   },

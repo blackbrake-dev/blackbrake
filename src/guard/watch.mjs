@@ -8,12 +8,39 @@ import path from 'node:path';
 import readline from 'node:readline';
 import { t } from '../i18n.mjs';
 import { clean } from '../text.mjs';
+import { defaultRoot } from '../transcripts.mjs';
 import { mini, motionAllowed, padEnd, screen } from '../ui/term.mjs';
-import { getSetting, guardHome, logDir, writePrivate } from './state.mjs';
+import { getInventorySnapshot, getSpendSecret, setInventorySnapshot, setSpendBaseline } from './spend-state.mjs';
+import { isPaused } from './pause.mjs';
+import { appendLog, getSetting, guardHome, logDir, writePrivate } from './state.mjs';
 import { HARNESSES } from './registry.mjs';
 import { systemProgram } from './window.mjs';
 
 export const LEVELS = ['low', 'medium', 'high', 'critical'];
+
+// The hook loads this module (through window.mjs) on every event: history and inventory code is
+// imported only when the watcher actually refreshes, never on the security path.
+export async function ensureSpendBaseline({ home = guardHome(), root = defaultRoot() } = {}) {
+  const { summarizeHistory } = await import('../cost/live.mjs');
+  const summary = await summarizeHistory({ root, harness: 'claude' });
+  setSpendBaseline('claude', summary.baseline, home);
+
+  return summary;
+}
+
+export async function ensureInventoryDelta({ home = guardHome(), userHome } = {}) {
+  const { inventoryDelta, inventoryDigest } = await import('../load/inventory.mjs');
+  const previous = getInventorySnapshot(home);
+  const current = inventoryDigest({ home: userHome, secret: getSpendSecret(home) });
+  const delta = inventoryDelta(previous, current);
+  setInventorySnapshot(current, home);
+
+  if (previous.length && (delta.added.length || delta.changed.length)) appendLog([{
+    ev: 'SessionStart', kind: 'inventory-delta', action: 'warned', added: delta.added.length, changed: delta.changed.length,
+  }], null, home);
+
+  return delta;
+}
 
 // What each event means for security. A secret that still went out (observe) is worse than one
 // guard stopped; an attempt to switch guard off is the maximum either way.
@@ -41,6 +68,11 @@ export function severity(e) {
     case 'destructive-command': return stopped ? 'low' : 'medium';
     case 'secret-in-history': return 'high';
     case 'prompt-injection': return 'medium';
+    case 'spend-cost':
+    case 'spend-tokens':
+    case 'spend-quota':
+    case 'spend-loop':
+    case 'inventory-delta': return 'low';
     case 'sensitive-read':
     case 'opaque-command': return stopped ? 'low' : 'medium';
     case 'error': return 'low';
@@ -72,6 +104,11 @@ const KIND_TEXT = {
   tamper: 'attempt to switch guard off',
   error: 'guard could not check a step',
   'secret-in-history': 'secret written in an agent\'s history',
+  'spend-cost': 'episode above your local cost p90',
+  'spend-loop': 'repeated tool call',
+  'spend-tokens': 'episode above your local token p90',
+  'spend-quota': 'Codex quota threshold reached',
+  'inventory-delta': 'new or changed agent add-ons',
 };
 
 const BADGE = {
@@ -344,6 +381,15 @@ function liveFooter(p, out, count, motion) {
 export async function watch(p, { home = guardHome(), out = process.stdout, intervalMs = 700, once = false, notifier = notify, keys = false, backHint = null } = {}) {
   fs.mkdirSync(home, { recursive: true, mode: 0o700 });
   writePrivate(lockFile(home), String(process.pid));
+
+  // Full history stays off the hook's hot path. The normal installed watcher refreshes the local
+  // aggregate; injected test homes and embedders can call ensureSpendBaseline explicitly.
+  if (path.resolve(home) === path.resolve(guardHome())) {
+    try { await ensureSpendBaseline({ home }); } catch { /* no readable history means no threshold */ }
+
+    try { await ensureInventoryDelta({ home }); } catch { /* an unavailable inventory does not stop alerts */ }
+  }
+
   const tail = createTail(home);
   // The last hour, for context; then only what is new.
   const history = tail.read(true).filter(recentEvent);
@@ -383,7 +429,19 @@ export async function watch(p, { home = guardHome(), out = process.stdout, inter
   }
 
   await new Promise((resolve) => {
-    const timer = setInterval(tick, intervalMs);
+    // Paused ("blackbrake pause"): the window says why and closes itself.
+    const timer = setInterval(() => {
+      if (!isPaused(home)) {
+        tick();
+
+        return;
+      }
+
+      live.out.write(`  ${p.amber(t('blackbrake is paused: nothing is being watched. This window closes now; "blackbrake resume" turns it back on.'))}
+`);
+      stop();
+    }, intervalMs);
+
     const input = process.stdin;
     const useKeys = keys && input.isTTY;
 

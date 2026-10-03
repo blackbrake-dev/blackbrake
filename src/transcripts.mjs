@@ -4,6 +4,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import readline from 'node:readline';
+import { isObject, isText } from './kinds.mjs';
 
 export const defaultRoot = () => path.join(os.homedir(), '.claude', 'projects');
 
@@ -31,7 +32,7 @@ export function listTranscripts(root) {
 
 // Messages that arrive with role "user" but were written by the harness, not the person.
 // Counting them as the user's words was a measured error in this project's own research.
-const HARNESS_TEXT = /^(Another Claude session sent a message|\[Subagent hand-back\]|Base directory for this skill:|Caveat:|<)/;
+const HARNESS_TEXT = /^(Another Claude session sent a message|\[Subagent hand-back\]|Base directory for this skill:|Caveat:|<(?:system-reminder|task-notification|local-command-caveat|local-command-stdout|command-name|command-message|command-args|ide_opened_file|ide_selection|teammate-message|environment_context|subagent_notification)(?:\s|>))/;
 
 export const isHarnessText = (text) => HARNESS_TEXT.test(text.trimStart());
 
@@ -55,13 +56,13 @@ export function* fragmentsOf(record, toolNames) {
     return;
   }
 
-  if (msg && typeof msg === 'object') {
-    const blocks = typeof msg.content === 'string' ? [{ type: 'text', text: msg.content }] : Array.isArray(msg.content) ? msg.content : [];
+  if (isObject(msg)) {
+    const blocks = isText(msg.content) ? [{ type: 'text', text: msg.content }] : Array.isArray(msg.content) ? msg.content : [];
 
     for (const b of blocks) {
-      if (!b || typeof b !== 'object') continue;
+      if (!isObject(b)) continue;
 
-      if (b.type === 'text' && typeof b.text === 'string') {
+      if (b.type === 'text' && isText(b.text)) {
         const kind = msg.role === 'user' ? (HARNESS_TEXT.test(b.text.trimStart()) ? 'harness' : 'user') : 'assistant';
         yield { kind, tool: null, text: b.text, ts };
       } else if (b.type === 'tool_use') {
@@ -74,7 +75,7 @@ export function* fragmentsOf(record, toolNames) {
         const call = toolNames.get(b.tool_use_id);
 
         for (const text of strings(b.content)) yield { kind: 'tool-output', tool: call?.name ?? null, filePath: call?.filePath ?? null, text, ts };
-      } else if (b.type === 'thinking' && typeof b.thinking === 'string') {
+      } else if (b.type === 'thinking' && isText(b.thinking)) {
         yield { kind: 'assistant', tool: null, text: b.thinking, ts };
       }
     }
@@ -88,7 +89,7 @@ export function* fragmentsOf(record, toolNames) {
 }
 
 function* strings(value) {
-  if (typeof value === 'string') { if (value.length >= 8) yield value;
+  if (isText(value)) { if (value.length >= 8) yield value;
 
  return; }
 
@@ -96,7 +97,7 @@ function* strings(value) {
 
  return; }
 
-  if (value && typeof value === 'object') for (const v of Object.values(value)) yield* strings(v);
+  if (isObject(value)) for (const v of Object.values(value)) yield* strings(v);
 }
 
 export async function* readTranscript(file) {

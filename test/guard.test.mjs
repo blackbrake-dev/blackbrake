@@ -150,6 +150,64 @@ test('tamper protection denies in both modes', () => {
   assert.equal(tamper('Bash', { command: 'ls ~/.blackbrake && cat ~/.blackbrake/state.json' }, { home: HOME }), null, 'reading guard\'s folder is fine');
   assert.ok(tamper('Bash', { command: 'echo {} > ~/.blackbrake/state.json' }, { home: HOME }), 'writing to it is not');
   assert.equal(tamper('Edit', { file_path: path.join(HOME, '.claude', 'settings.json'), old_string: '"blackbrake@blackbrake": true', new_string: '"blackbrake@blackbrake": true, "x@y": true' } , { home: HOME }), null);
+
+  // C1: Shell tampering with flags — allowlist enforced for non-read commands
+  const c1Deny = [
+    'blackbrake --json pause',
+    'env -u CLAUDECODE blackbrake pause',
+    'npx blackbrake@x pause',
+    'npx -y blackbrake@0.3.0 --json resume',
+    'node bin/blackbrake.mjs -q stop',
+    'bash -c "blackbrake pause"',
+    'sudo -E blackbrake.cmd pause',
+    'blackbrake $x',
+    'FOO=1 blackbrake --json pause',
+    'xargs blackbrake pause',
+    'echo hi | blackbrake -j pause',
+    // Review A (2026-10-01): a flag that takes a value swallows the next word, as the CLI does.
+    'blackbrake --path status pause',
+    'blackbrake --lang status uninstall',
+    'blackbrake --home status mode observe',
+    'blackbrake --days status window off',
+    'blackbrake --agent status report',
+    'npx blackbrake --path status pause',
+    'node bin/blackbrake.mjs --path status pause',
+    // The subcommand arrives on stdin.
+    'echo pause | xargs blackbrake',
+    'parallel blackbrake ::: pause',
+    // Review A: a name built in several assignments, in the order the shell runs them.
+    'd=.black; d=${d}brake; echo {} > ~/$d/state.json',
+    'a=.bl; a+=ackbrake; echo {} > ~/$a/state.json',
+    'a=black; a+=brake; $a report send x.md',
+    'a=black; a=${a}brake; $a setup',
+  ];
+
+  for (const cmd of c1Deny) {
+    assert.ok(tamper('Bash', { command: cmd }, { home: HOME }), `C1: should deny "${cmd}"`);
+  }
+
+  const c1Allow = [
+    'blackbrake',
+    'blackbrake status',
+    'blackbrake --json status --details',
+    'npx blackbrake audit --json',
+    'node bin/blackbrake.mjs',
+    'blackbrake help',
+    'git -C blackbrake commit -- a',
+    'cd blackbrake && npm test',
+    'ls blackbrake',
+    'npm test --prefix blackbrake',
+    'blackbrake log --days 3',
+    'blackbrake --days 3 log',
+    'blackbrake scan --agent codex',
+    'blackbrake --agent codex scan',
+    'blackbrake audit --path ./logs --json',
+    'blackbrake --lang es status',
+  ];
+
+  for (const cmd of c1Allow) {
+    assert.equal(tamper('Bash', { command: cmd }, { home: HOME }), null, `C1: should allow "${cmd}"`);
+  }
 });
 
 test('secret printed by a command: protect hides it from the model, observe warns', () => {

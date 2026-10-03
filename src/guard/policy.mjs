@@ -314,11 +314,6 @@ export function shellViews(command = '') {
   const joined = joinPieces(literal);
   const vars = new Map();
 
-  // bash: NAME=value, export/local/set NAME=value; PowerShell: $NAME = "a" + "b".
-  for (const m of joined.matchAll(/(?:^|[\s;&|(])(?:export\s+|local\s+|declare\s+|set\s+)?([A-Za-z_]\w*)=("[^"\n]*"|'[^'\n]*'|[^\s;&|)]*)/g)) vars.set(m[1], m[2].replace(/^["']|["']$/g, ''));
-
-  for (const m of joined.matchAll(/\$([A-Za-z_]\w*)\s*=\s*([^;\n]+)/g)) vars.set(m[1], m[2].trim().replace(/["']/g, ''));
-
   // ${v:2}, ${v:1:3}, ${v/x/c}, ${v//x/}, ${v#pre}, ${v%suf}: applied with literal patterns only
   // (a pattern holding glob characters is left alone, as is anything unknown).
   const operate = (value, op) => {
@@ -365,6 +360,20 @@ export function shellViews(command = '') {
       return budget >= 0 ? value : all;
     });
   };
+
+  // Assignments in the order the shell runs them, each value expanded with what the variables held
+  // at that point: `d=.black; d=${d}brake` and `a=.bl; a+=ackbrake` both end as `.blackbrake`
+  // (review A, 2026-10-01: last-one-wins left `${d}brake` pointing at itself, unresolved).
+  // bash: NAME=value, NAME+=value, export/local/declare/set NAME=value; PowerShell: $NAME = …, $NAME += ….
+  const assignments = [
+    ...[...joined.matchAll(/(?:^|[\s;&|(])(?:export\s+|local\s+|declare\s+|set\s+)?([A-Za-z_]\w*)(\+?)=("[^"\n]*"|'[^'\n]*'|[^\s;&|)]*)/g)].map((m) => ({ at: m.index, name: m[1], append: m[2] === '+', value: m[3].replace(/^["']|["']$/g, '') })),
+    ...[...joined.matchAll(/\$([A-Za-z_]\w*)\s*(\+?)=\s*([^;\n]+)/g)].map((m) => ({ at: m.index, name: m[1], append: m[2] === '+', value: m[3].trim().replace(/["']/g, '').replace(/\s*\+\s*/g, '') })),
+  ].sort((a, b) => a.at - b.at).slice(0, 256);
+
+  for (const { name, append, value } of assignments) {
+    const now = expand(value, vars);
+    vars.set(name, `${append ? vars.get(name) ?? '' : ''}${now}`.slice(0, 64 * 1024));
+  }
 
   // Resolve values before inserting them: replacing ${e} with $d next to 'brake' would invent $dbrake.
   for (let i = 0; i < 8 && vars.size; i++) {
@@ -588,6 +597,81 @@ const HOOKS_OFF = /"?hooks"?\s*[:=]\s*\{\s*\}|"?hooks"?\s*[:=]\s*\{[^}]{0,200}?"
 const GUARD_IN_SHELL = /\.blackbrake\b|blackbrake-watch\.(vbs|desktop)|dev\.blackbrake\.watch|\.b(l(a(c(k[a-z]*)?)?)?)?[*?[]|\.[?*[][a-z*?[\]]*ackbrake|(~|\$HOME|\$env:USERPROFILE|%USERPROFILE%)[\\/]+\.?[*?[]|\{[^}]*\.b(l(a(c(k[a-z]*)?)?)?)?[,}*?]/i;
 
 
+// guard's folder spelled through an expansion the check cannot resolve (round 2, V2): an unset
+// variable (.black${z}brake), a command ($(printf brake)), indirection (${!n}, declare -n), arrays and
+// slices, positional words, PowerShell variables and $(…), cmd's !d! and %d:x=c%, for-loop variables.
+// Not resolved: each expansion becomes a gap, and a gap next to part of the name, or right after the
+// home folder, is treated as naming guard's folder. String transforms (-replace, [char]) are covered
+// by a near-miss of the name. Known false positive, accepted: writing to `~/$X` directly in home.
+const HOME_REF = /\$\{?env:(USERPROFILE|HOME)\}?|%USERPROFILE%|%HOMEDRIVE%%HOMEPATH%|\$\{HOME(?:[:-][^{}]*)?\}|\$HOME\b/gi;
+
+const UNRESOLVED = /\$\{?env:\w+\}?|\$\{[^{}]*\}|\$\([^()]*\)|\$\w+|\$[@*#?!$]|`[^`]*`|%%?\w+(?::[^%\s]*)?%|%%?[a-z]|![\w:~=,-]+!|\[char\]\s*\d+/gi;
+
+const GAP_PREFIX = /(^|[\s\\/"'=(+])\.b(l(a(c(k(b(r(a(k)?)?)?)?)?)?)?)?\0/i;
+
+const GAP_SUFFIX = /\0+[a-z]{0,9}rake(?=[\\/]|["')\s]*$|["')\s]*[;&|])/i;
+
+const GAP_AFTER_HOME = /~[\\/]+\.?\0/;
+
+function nearGuardName(word) {
+  const a = word.toLowerCase();
+  const b = '.blackbrake';
+
+  if (Math.abs(a.length - b.length) > 2) return false;
+  let prev = Array.from({ length: b.length + 1 }, (_, j) => j);
+
+  for (let i = 1; i <= a.length; i++) {
+    const row = [i];
+
+    for (let j = 1; j <= b.length; j++) row.push(Math.min(prev[j] + 1, row[j - 1] + 1, prev[j - 1] + (a[i - 1] === b[j - 1] ? 0 : 1)));
+    prev = row;
+  }
+
+  return prev[b.length] <= 2;
+}
+
+// Variables given a plain literal value in the command itself (d=.ssh, $p = 'x'): shellViews resolves
+// those, so they are not gaps. Every assignment must be literal; setters/namerefs may replace
+// that value indirectly. Bash names are case sensitive, so d never makes D a known value.
+function literalNames(command) {
+  const names = new Set();
+  const invalid = new Set();
+  const text = String(command);
+
+  for (const m of text.matchAll(/(?:^|[\s;&|(])\$?([A-Za-z_]\w*)\s*(\+?=)\s*/g)) {
+    const value = text.slice(m.index + m[0].length);
+
+    if (m[2] === '=' && /^(["']?)([^\s;&|$`()'"]+)\1(?=[\s;&|)]|$)/.test(value)) names.add(m[1]);
+    else invalid.add(m[1]);
+  }
+
+  if (/\b(?:read|readarray|mapfile|getopts|for|select|foreach|declare|typeset|local|eval|source|unset|Set-Variable|New-Variable|sv)\b|\bprintf\s+(?:-[^\s;&|]+\s+)*-v/i.test(asRun(text))) names.clear();
+
+  for (const name of invalid) names.delete(name);
+
+  return names;
+}
+
+export function guardThroughGap(view, command = view) {
+  const known = literalNames(command);
+  let v = unquote(view).replace(HOME_REF, '~');
+
+  for (let i = 0; i < 8; i++) {
+    const next = v.replace(UNRESOLVED, (m) => (known.has(m.replace(/^\$\{?|\}$/g, '')) ? m : '\0'));
+
+    if (next === v) break;
+    v = next;
+  }
+
+  // Pieces joined with + (PowerShell, JavaScript) are one word to the check.
+  v = v.replace(/\s*\+\s*/g, '');
+
+  if (GAP_PREFIX.test(v) || GAP_SUFFIX.test(v) || GAP_AFTER_HOME.test(v)) return true;
+  const closed = v.replaceAll('\0', '');
+
+  return GUARD_IN_SHELL.test(closed) || (closed.match(/\.b[a-z]{6,12}/gi) ?? []).some(nearGuardName);
+}
+
 // Commands that only read. Each part of a command line (split on pipes, ;, &&, ||, &, newlines)
 // must start with one of these, with no redirection, no command substitution and none of the
 // writing flags some of them have (find -delete/-exec, sort -o, tee is not listed).
@@ -631,10 +715,12 @@ export function readOnlyCommand(command) {
 // one (script, expect, unbuffer, winpty, socat, a pty module, tmux/screen send-keys) and feed the
 // confirmation word, or hide the program name behind a variable. So: a pseudo-terminal wrapper or a
 // variable/expansion on the same line as a lowering word (mode observe, uninstall, background off,
-// window off, permissions) is refused. Not airtight against arbitrary code (the README says so).
+// window off, permissions, pause) is refused. Not airtight against arbitrary code (the README says so).
+// Known false positive, accepted (guard-design §6x W2-3): `cmd /c "echo %X% & pause"` or
+// `docker pause $ID` is refused too; cmd's pause would hang the agent's keyboardless shell anyway.
 const PTY_WRAPPER = /\b(script|expect|unbuffer|winpty|socat|scriptreplay|conpty|ptyprocess|node-pty|pty\.spawn|pexpect)\b|\b(tmux|screen)\b[^\n]*(send-keys|-X\s+stuff)/i;
 
-const LOWERING = /\b(mode\s+observe|observar|uninstall|background\s+off|window\s+off|permissions|--purge)\b/i;
+const LOWERING = /\b(mode\s+observe|observar|uninstall|background\s+off|window\s+off|permissions|--purge|pause)\b/i;
 
 const EXPANSION = /\$\{?\w+\}?|%\w+%|\$env:\w+|\$\(|`|\beval\b|\biex\b|Invoke-Expression|&\s*\(/i;
 
@@ -643,7 +729,7 @@ export const unquote = (cmd) => String(cmd).replace(/["'^]/g, '');
 
 // blackbrake named anywhere, plus an expansion and a lowering word anywhere (not only adjacent):
 // `blackbrake $(echo mode) observe`.
-const LOWERING_WORD = /\b(observe|observar|uninstall|purge|permissions)\b|\bbackground\b[^\n]*\boff\b|\bwindow\b[^\n]*\boff\b/i;
+const LOWERING_WORD = /\b(observe|observar|uninstall|purge|permissions|pause|pausar)\b|\bbackground\b[^\n]*\boff\b|\bwindow\b[^\n]*\boff\b/i;
 
 export const lowersThroughWrapper = (raw) => {
   const cmd = unquote(raw);
@@ -656,7 +742,84 @@ export const lowersThroughWrapper = (raw) => {
   return /\bblackbrake\b/i.test(cmd) && EXPANSION.test(raw) && LOWERING_WORD.test(cmd);
 };
 
-const SHELL_TAMPER = /\bBLACKBRAKE_\w+\s*=|\b(pkill|killall|Stop-Process|taskkill)\b[^\n]{0,200}\bblackbrake\b|\blaunchctl\s+bootout\s+(gui|user)\/\d+\s*(?:$|[;&|])|\bblackbrake(\.mjs|\.cmd|\.ps1|\.exe)?["']?\s+(mode|uninstall|setup|background|window|permissions|lang|fix)\b|\bwatch-main\.mjs|\b(node|bun|deno)(\.exe)?\b[^\n]*guard[\\/](cli|state|hook|policy|install)\.mjs|\bimport\(?[^\n]*guard[\\/](state|install)\.mjs|\bBLACKBRAKE_HOME\b|disableAllHooks|\bclaude(\.cmd|\.exe)?["']?\s+plugins?\s+(disable|uninstall|remove|rm)\b|\bplugins?\s+marketplace\s+(remove|rm)\b[^\n]*blackbrake/i;
+
+// Allowlist: if a command executes blackbrake, only read-only subcommands (status, log, audit, etc.)
+// are allowed. Everything else is rejected, including variables. This closes the bypass where
+// `blackbrake --json pause` (flags between command and subcommand) was not detected.
+const BLACKBRAKE_TOKEN = /^(?:.*[/])?blackbrake(?:@\S*)?(?:\.(?:mjs|cmd|ps1|exe))?$/i;
+
+const BLACKBRAKE_READ_SUBCOMMANDS = new Set(['status', 'log', 'agents', 'scan', 'audit', 'help']);
+
+// The flags of bin/blackbrake.mjs that take the next word as their value (keep in step with parseArgs).
+const VALUE_FLAGS = new Set(['--path', '--home', '--lang', '--agent', '--days']);
+
+const LAUNCHERS = new Set(['env', 'sudo', 'doas', 'nohup', 'time', 'command', 'exec', 'builtin', 'nice', 'ionice', 'timeout', 'stdbuf', 'xargs', 'parallel', 'setsid', 'chroot', 'cmd', 'call', 'start', 'bash', 'sh', 'zsh', 'dash', 'fish', 'ksh', 'pwsh', 'powershell', 'node', 'bun', 'deno', 'npx', 'bunx', 'pnpm', 'pnpx', 'npm', 'yarn', 'volta', 'winpty', 'script', 'expect', 'unbuffer', 'watch', 'then', 'do', 'else', 'if', 'while', 'until', 'start-process', 'invoke-command', 'icm']);
+
+// The subcommands that change something (bin/blackbrake.mjs and src/cli/features): wherever blackbrake
+// appears, it followed by one of these is refused. A launcher list can never be complete (flock,
+// taskset, strace, ssh, su, find -exec, git aliases…), so position alone does not decide (round 2, V1).
+const BLACKBRAKE_CHANGES = new Set(['setup', 'uninstall', 'mode', 'lang', 'watch', 'window', 'fix', 'background', 'permissions', 'claude', 'statusline', 'pause', 'resume', 'report', 'stop']);
+
+// Naming blackbrake under another name: shell and PowerShell aliases, cmd macros.
+const ALIAS_VERBS = /^(alias|set-alias|new-alias|sal|nal|doskey)$/i;
+
+// The program inside a word: after `=` or `!` (alias.x=!blackbrake, bb=blackbrake) and after the
+// folders, in either slash (C:\x\blackbrake.cmd).
+const programOf = (word) => word.split('=').pop().replace(/^[!&@<>|]+/, '').split(/[\\/]/).pop();
+
+const isBlackbrake = (word) => BLACKBRAKE_TOKEN.test(programOf(word));
+
+function blackbrakeRunsNonRead(view) {
+  const text = String(view);
+
+  if (!/blackbrake/i.test(text)) return false;
+
+  // Indirection the check cannot follow, next to blackbrake: ${!name}, "$@", $*.
+  if (/\$\{!|\$\{?[@*]/.test(text)) return true;
+
+  // Parts and the separator after each: [part, sep, part, sep, …, part]. An escaped separator is a
+  // literal character to the shell (grep "a\|b", find … \;), not a new part.
+  const pieces = text.replace(/\\[|;&()]/g, ' ').split(/(\|\||&&|[|;&\n(){}`]|\$\()/);
+
+  for (let k = 0; k < pieces.length; k += 2) {
+    const words = pieces[k].trim().split(/\s+/).filter(Boolean);
+    let i = 0;
+
+    // Assignments, `!` and redirections before the program (`>/dev/null blackbrake …`).
+    while (i < words.length && (/^[\w.-]+=/.test(words[i]) || words[i] === '!' || /^\d*[<>]/.test(words[i]))) i++;
+
+    if (ALIAS_VERBS.test(words[i] ?? '') && words.some(isBlackbrake)) return true;
+
+    const first = (words[i] ?? '').toLowerCase().replace(/\.(exe|cmd|bat|ps1)$/, '').split(/[\\/]/).pop();
+    const launched = LAUNCHERS.has(first);
+
+    for (let at = i; at < words.length; at++) {
+      if (!isBlackbrake(words[at])) continue;
+
+      // Read the words the way bin/blackbrake.mjs parseArgs does: a flag that takes a value swallows
+      // the next word (`blackbrake --path status pause` runs pause), every other flag is skipped.
+      let j = at + 1;
+
+      while (j < words.length && words[j].startsWith('-')) j += VALUE_FLAGS.has(words[j].toLowerCase()) ? 2 : 1;
+      const sub = (words[j] ?? '').toLowerCase();
+
+      if (BLACKBRAKE_CHANGES.has(sub)) return true;
+
+      // Where it is clearly the program being run, anything but a read-only subcommand is refused.
+      if (at !== i && !launched) continue;
+
+      if (sub && !BLACKBRAKE_READ_SUBCOMMANDS.has(sub)) return true;
+
+      // No subcommand in sight because an expansion builds it (`blackbrake $(echo pau)se`) or it
+      // arrives on stdin (`echo pause | xargs blackbrake`, `parallel blackbrake ::: pause`): refused.
+      if (!sub && (/^(\$\(|`|\(|\{)$/.test(pieces[k + 1] ?? '') || words.slice(0, at).some((w) => /^(xargs|parallel)$/i.test(w)) || words.includes(':::'))) return true;
+    }
+  }
+
+  return false;
+}
+
+const SHELL_TAMPER = /\bBLACKBRAKE_\w+\s*=|\b(pkill|killall|Stop-Process|taskkill)\b[^\n]{0,200}\bblackbrake\b|\blaunchctl\s+bootout\s+(gui|user)\/\d+\s*(?:$|[;&|])|\bblackbrake(\.mjs|\.cmd|\.ps1|\.exe)?["']?\s+(mode|uninstall|setup|background|window|permissions|lang|fix|pause|resume|stop|report)\b|\bwatch-main\.mjs|\b(node|bun|deno)(\.exe)?\b[^\n]*guard[\\/](cli|state|hook|policy|install)\.mjs|\bimport\(?[^\n]*guard[\\/](state|install)\.mjs|\bBLACKBRAKE_HOME\b|disableAllHooks|\bclaude(\.cmd|\.exe)?["']?\s+plugins?\s+(disable|uninstall|remove|rm)\b|\bplugins?\s+marketplace\s+(remove|rm)\b[^\n]*blackbrake/i;
 
 
 const CLAUDE_CONFIG_IN_SHELL = /\.claude\.json\b|\.claude[\\/]+settings(\.local)?\.json\b|managed-settings\.json\b|\.codex[\\/]+(hooks\.json|config\.toml)|\.gemini[\\/]+(settings\.json|config[\\/]+hooks\.json)|\.cursor[\\/]+hooks\.json|\.copilot[\\/]+(hooks|settings\.json|config\.json)|\.github[\\/]+(hooks|copilot)[\\/]|\.codeium[\\/]+(windsurf[\\/]+)?hooks\.json|\.(windsurf|devin)[\\/]+hooks\.json|\.devin[\\/]+(hooks\.v1\.json|config(\.local)?\.json)|[\\/]devin[\\/]+config\.json/i;
@@ -677,10 +840,13 @@ export function tamper(tool, input = {}, ctx = {}, commandViews = null) {
     // Naming blackbrake's files or an agent's hook config is fine only for commands known to just
     // read (an allow-list: a list of writing verbs can never be complete). Checked on the command as
     // written, without quotes, and resolved (variables, joined pieces, paths after a cd).
-    const views = [...new Set((commandViews ?? shellViews(cmd)).flatMap((v) => [v, unquote(v), asRun(v)]))];
+    const shown = commandViews ?? shellViews(cmd);
+    const views = [...new Set(shown.flatMap((v) => [v, unquote(v), asRun(v)]))];
+    // The most resolved view: what is still an expansion there could not be followed.
+    const resolved = shown.at(-1) ?? cmd;
     const readOnly = readOnlyCommand(cmd);
 
-    if (views.some((v) => SHELL_TAMPER.test(v)) || lowersThroughWrapper(cmd) || (views.some((v) => GUARD_IN_SHELL.test(v)) && !readOnly)) return t('it would change or switch off blackbrake');
+    if (views.some((v) => SHELL_TAMPER.test(v) || blackbrakeRunsNonRead(v)) || lowersThroughWrapper(cmd) || (!readOnly && (views.some((v) => GUARD_IN_SHELL.test(v)) || guardThroughGap(cmd) || guardThroughGap(resolved, cmd)))) return t('it would change or switch off blackbrake');
 
     if ((views.some((v) => CLAUDE_CONFIG_IN_SHELL.test(v)) || (input.files ?? []).some((f) => protectedTarget(f, ctx))) && !readOnly) return t('it changes a coding agent\'s configuration through the shell, where the change cannot be checked; use the Edit tool instead');
 
@@ -878,7 +1044,9 @@ export function decide(event, input, ctx = {}) {
 
   // oxlint-disable-next-line anti-slop/no-runtime-typeof -- Validate untrusted JSON or assert the boundary contract; preserve primitive type checks.
   const tool = typeof input.tool_name === 'string' ? input.tool_name : null;
-  const shownTool = tool ? (KNOWN_TOOLS.test(tool) ? tool : tool.startsWith('mcp__') ? 'MCP' : 'tool') : null;
+  // oxlint-disable-next-line anti-slop/no-runtime-typeof -- Validate untrusted JSON or assert the boundary contract; preserve primitive type checks.
+  const named = typeof input.shell_via === 'string' ? input.shell_via : tool;
+  const shownTool = named ? (KNOWN_TOOLS.test(named) ? named : named.startsWith('mcp__') ? 'MCP' : 'tool') : null;
   const log = [];
 
   const note = (kind, action, extra = {}) => {
@@ -935,7 +1103,8 @@ export function decide(event, input, ctx = {}) {
   if (event === 'PreToolUse') {
     const ti = input.tool_input ?? {};
     const commandViews = /^(Bash|PowerShell)$/.test(input.tool_name ?? '') ? shellViews(ti.command) : null;
-    const why = tamper(input.tool_name, ti, ctx, commandViews);
+    // A shell tool under another name (asShell): its other arguments are checked like any request's.
+    const why = tamper(input.tool_name, ti, ctx, commandViews) ?? (input.shell_via ? tamper(input.shell_via, input.shell_args ?? {}, ctx) : null);
 
     if (why) {
       note('tamper', 'denied');
@@ -993,8 +1162,8 @@ export function decide(event, input, ctx = {}) {
 
     // Requests that leave the machine: a secret in a URL or query is exfiltration. A tool this
     // version does not know (a new built-in, an agent's memory tool) is treated the same way.
-    if (/^(WebFetch|WebSearch)$/.test(tool ?? '') || (tool ?? '').startsWith('mcp__') || (tool && !KNOWN_TOOLS.test(tool))) {
-      const text = textOf(ti);
+    if (/^(WebFetch|WebSearch)$/.test(tool ?? '') || (tool ?? '').startsWith('mcp__') || (tool && !KNOWN_TOOLS.test(tool)) || input.shell_via) {
+      const text = textOf(input.shell_via ? input.shell_args ?? {} : ti);
       const found = realSecrets(text);
       const requestedFile = text.split('\n').find((s) => isSensitivePath(s));
 

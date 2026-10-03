@@ -29,7 +29,29 @@ export function priceFor(model = '', { fast = false } = {}) {
   return { ...p, cw: p.in * 1.25, cw1h: p.in * 2, known: Boolean(hit) };
 }
 
+// Transcript lines are untrusted (F6.12 D2): a forged line with negative, fractional, non-finite,
+// string or absurd token counts could lower an episode's cost below the alert threshold or poison
+// the p90. A token field is either absent (undefined = 0) or an integer 0..1e9; a record with
+// any other value is invalid as a whole and is worth nothing (callers discard it).
+const MAX_TOKENS = 1e9;
+
+const USAGE_FIELDS = ['input_tokens', 'output_tokens', 'cache_creation_input_tokens', 'cache_read_input_tokens'];
+
+const SPLIT_FIELDS = ['ephemeral_1h_input_tokens', 'ephemeral_5m_input_tokens'];
+
+const isRecord = (value) => value !== null && !Array.isArray(value) && Object.prototype.toString.call(value) === '[object Object]';
+
+const validCount = (value) => value === undefined || (Number.isInteger(value) && value >= 0 && value <= MAX_TOKENS);
+
+export function validUsage(u) {
+  if (!isRecord(u) || !USAGE_FIELDS.every((field) => validCount(u[field]))) return false;
+  const split = u.cache_creation;
+
+  return split === undefined || split === null || (isRecord(split) && SPLIT_FIELDS.every((field) => validCount(split[field])));
+}
+
 export function usageCost(u, model) {
+  if (!validUsage(u)) return 0;
   const p = priceFor(model, { fast: u.speed === 'fast' });
   const total = u.cache_creation_input_tokens || 0;
   const split = u.cache_creation;
@@ -40,4 +62,6 @@ export function usageCost(u, model) {
 }
 
 // Size of a usage record: streaming snapshots of one response only grow, so the largest is final.
-export const usageSize = (u) => (u.input_tokens || 0) + (u.output_tokens || 0) + (u.cache_creation_input_tokens || 0) + (u.cache_read_input_tokens || 0);
+export const usageSize = (u) => (validUsage(u)
+  ? (u.input_tokens || 0) + (u.output_tokens || 0) + (u.cache_creation_input_tokens || 0) + (u.cache_read_input_tokens || 0)
+  : 0);

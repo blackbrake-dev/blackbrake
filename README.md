@@ -8,12 +8,33 @@ blackbrake
 ```
 
 Install it once and open it from any folder by typing `blackbrake`, like `claude` or `gemini`. It
-installs one package with no dependencies and no install scripts, published with npm provenance
-(`npm audit signatures` verifies it). To try it without installing anything: `npx blackbrake`
-(or `npx blackbrake audit` for the report alone). Update with `npm install -g blackbrake@latest`,
-then run `blackbrake setup` so guard's own copy (`~/.blackbrake/app`) is refreshed too
-(`blackbrake status` tells you if it is out of date). To remove it: `blackbrake uninstall` first
-(add `--purge` to also delete `~/.blackbrake`: log, state and backups), then `npm uninstall -g blackbrake`.
+installs one package with no dependencies and no install scripts, published with npm provenance.
+Current stable: **v0.2.3** (published 2026-09-28). Next: **v0.3.0** (prepared, not published yet; see
+[release notes](RELEASE-NOTES-0.3.0.md)). To try it without installing
+anything: `npx blackbrake` (or `npx blackbrake audit` for the report alone). Update with
+`npm install -g blackbrake@latest`, then run `blackbrake setup` so guard's own copy (`~/.blackbrake/app`)
+is refreshed too (`blackbrake status` tells you if it is out of date).
+
+**Verify the package (optional).** `npm audit signatures` does not work with `-g`, so check it in an
+empty folder:
+
+```
+mkdir bb-check && cd bb-check
+npm init -y
+npm install blackbrake --ignore-scripts
+npm audit signatures
+```
+
+Expected: 1 package with a verified registry signature and 1 with a verified attestation. That proves
+the package was built from this public repository by its release workflow; it does not prove the code
+is bug-free.
+
+**Remove it.** Run `blackbrake uninstall` first (it asks you to type `remove`; `--purge` also deletes
+`~/.blackbrake` — log, settings, backups, the copies "fix" kept for undo and saved reports — and asks for
+`purge`), then `npm uninstall -g blackbrake`. npm runs no uninstall scripts: removing the package alone
+leaves the protection installed and the watcher running. The home screen has the same option
+(**Uninstall blackbrake…**), which lists what goes, what stays and what is left for you to do, and then
+checks that nothing of blackbrake is still running.
 
 ## What it does NOT do
 
@@ -30,9 +51,9 @@ Read this first. It is the reason you can run it.
 - **No dependencies.** Zero runtime packages. What you install is the code in this repository.
 - **No AI.** Detection is deterministic: regular expressions, entropy and context rules.
 
-## What it does (v0)
+## What it does
 
-One screen, three sections, from files Claude Code already keeps on your machine
+**Audit screen** — three sections, from files Claude Code already keeps on your machine
 (`~/.claude/projects/**/*.jsonl`, `~/.claude/`, `~/.claude.json`):
 
 1. **Exposure** — secrets that ended up in your transcripts.
@@ -41,6 +62,27 @@ One screen, three sections, from files Claude Code already keeps on your machine
 3. **Spend** — where your agent spend concentrates: your costliest 10% of episodes, your typical
    and 90th-percentile episode, the fixed context you pay on every turn. Descriptive only: no
    "you could save X%" claims.
+
+**Home screen** — audit, live alerts, protection and settings, plus:
+- **Pause all of blackbrake** — a full, reversible stop. The hooks stay installed but answer without
+  checking anything; the watcher and the alerts window stop and the login item is removed until you
+  resume. You type `pause` to confirm, in your own terminal (not inside an AI agent). While paused, the
+  menu, `blackbrake status`, `agents`, the status line and every new Claude Code, Codex, Gemini or
+  Devin session say so, and `setup`, `mode`, `window on`, `background on` and `permissions` refuse
+  until you run `blackbrake resume`. Resuming needs no confirmation (it raises protection) and tells
+  you if any hook was removed or any of guard's code changed while it was paused.
+- **Uninstall blackbrake…** — see "Remove it" above.
+- **Send feedback or report a problem…** / **Report a security issue…** — see "Reports" below.
+
+**Reports (opt-in, nothing is sent by blackbrake).** `blackbrake report [product|security]` writes a
+plain-text file in `~/.blackbrake/reports` from what you type, shows it to you whole, and lets you edit
+it, check it again, delete it or send it yourself. Every line is checked against a strict "safe text"
+format: no links, no HTML, no file paths, no user or computer names, nothing that looks like a secret.
+You can add some numbers about your setup (version, OS, which agents, counts of what guard did); every
+box starts unticked and shows the exact lines it would add. To send, blackbrake shows the address and
+subject; only if you press "Open my mail app" does it show the whole message and, after you say yes,
+open your mail app with it. It cannot tell whether you sent it. Reports expire after 30 days.
+`report list`, `show <name>`, `check <name>`, `send <name>` and `delete <name>|--all` manage them.
 
 ### Exposure
 
@@ -120,6 +162,14 @@ counting them splits expensive episodes into pieces and hides the concentration.
   uninstalling need your confirmation in an interactive terminal, which the agent does not have.
 - The log (`~/.blackbrake/log`) keeps time, a hashed session id, event type and rule id. Never
   prompts, commands, file contents or secret values. `blackbrake status` and `blackbrake log` read it.
+- Spend brakes warn at your per-agent local p90 after 30 episodes (list-price estimate, not savings);
+  live cost is currently available for Claude Code, while repeated-call warnings cover all seven agents.
+  **You choose how soon each brake warns**: `blackbrake brakes` (or Protection → Spend brakes in the
+  menu) shows them and changes them — episode cost at your p50/75/90/95/99 or at a fixed amount, episode
+  tokens (Codex, Devin) at a percentile, repeated calls (2–10 times within 1–30 minutes), and Codex quota
+  alerts (50–100%); any brake can be switched off. Making a brake warn sooner needs nothing; making it
+  warn later or never lowers protection, so you type `loosen` in your own terminal. Values out of range
+  or a damaged settings file fall back to the defaults.
 - Recoverable errors refuse tool calls in both modes, and refuse prompts in protect where the
   agent supports it. Output that cannot be inspected is withheld where replacement is supported.
   A failure to write the log never cancels a denial. The hook times out incomplete stdin after five
@@ -277,6 +327,10 @@ blackbrake                       # home screen, in an interactive terminal
 blackbrake audit [--path <dir>] [--home <dir>] [--json] [--all]
 blackbrake scan [--agent <id>]
 blackbrake fix [--undo]
+blackbrake pause | resume
+blackbrake brakes [<brake> <value> | reset]      # e.g. cost.percentile 95 · loop.repeats 4 · quota off
+blackbrake report [product|security] | list | show <name> | check <name> | send <name> | delete <name>|--all
+blackbrake uninstall [--agent <id>] [--purge]
 ```
 
 Run with no command in a terminal to get the home screen (arrow keys, Enter, `q` to quit). In a
@@ -290,13 +344,23 @@ set `NO_COLOR=1` to turn it off.
 | `--json` | Machine-readable output. Secret values are never included |
 | `--all` | Show every finding, including those classified as not real or found in documentation |
 
-Requires Node.js 20 or later.
+Requires Node.js 20 or later; use 22 or 24 (LTS), since Node 20 has reached its end of life.
 
-## Roadmap
+## Status and Roadmap
 
-A real-time `guard` that starts in observe-only mode (cost and damage brakes with session
-context, built on [cc-safety-net](https://github.com/kenryu42/cc-safety-net) rather than
-replacing it). Other agents (Codex, Cursor) after that.
+**v0.3.0 (prepared 2026-10-03, not published yet):** pause and resume, uninstall from the menu with a
+process sweep that checks nothing is left running, the alerts window opening once per session (not
+over SSH, not for background agents, at most once every 10 minutes), Cursor's `sessionStart`, opt-in
+local reports, and spend brakes you can adjust (episode cost and token alerts against your own history
+or a fixed amount, repeated tool calls, Codex quota). Fixed on the way: Cursor on Windows sends its hook input with a byte order mark, which made
+v0.2.3 refuse every Cursor step as "could not check" (found in a real `cursor-agent` session; whether
+the Cursor editor does the same is still to be confirmed). Done before publishing: independent security
+review rounds, with every high and medium finding they reported fixed, and CI on Windows, macOS and Linux × Node
+20/22/24. Still to do: a hands-on check on real macOS and Linux desktops.
+
+**[PLANNED] Wave 2:** Cost and damage brakes with session context built on
+[cc-safety-net](https://github.com/kenryu42/cc-safety-net) rather than replacing it. Full guard
+in observe mode for all seven agents. Other features per monetization plan and user decision.
 
 ## Credits
 

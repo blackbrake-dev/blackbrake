@@ -4,6 +4,7 @@
 import crypto from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
+import { mayChange } from '../guard/safety.mjs';
 import { guardHome } from '../guard/state.mjs';
 import { getLang } from '../i18n.mjs';
 import { clean } from '../text.mjs';
@@ -57,7 +58,7 @@ export function promptUnchanged(file, hash) {
 
 // Prompts older than 7 days are deleted (they hold no secrets, but no need to keep them).
 export function prunePrompts({ home = guardHome(), now = Date.now } = {}) {
-  const dir = path.join(home, 'fixes');
+  const dir = mayChange(path.resolve(home, 'fixes'));
   let names = [];
 
   try { names = fs.readdirSync(dir).filter((n) => /^fix-[\w-]+\.md$/.test(n)); } catch { return 0; }
@@ -76,7 +77,7 @@ export function prunePrompts({ home = guardHome(), now = Date.now } = {}) {
 
 // Saves the prompt privately and returns its path.
 export function savePrompt(text, { home = guardHome(), now = Date.now } = {}) {
-  const dir = path.join(home, 'fixes');
+  const dir = mayChange(path.resolve(home, 'fixes'));
   fs.mkdirSync(dir, { recursive: true, mode: 0o700 });
   const file = path.join(dir, `fix-${new Date(now()).toISOString().replace(/[:.]/g, '-')}-${crypto.randomBytes(3).toString('hex')}.md`);
   fs.writeFileSync(file, text, { flag: 'wx', mode: 0o600 });

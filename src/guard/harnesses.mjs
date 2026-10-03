@@ -7,6 +7,7 @@
 import path from 'node:path';
 import { t } from '../i18n.mjs';
 import { textOf } from './policy.mjs';
+import { isText } from '../kinds.mjs';
 
 // ---------- canonical output helpers ----------
 
@@ -163,6 +164,7 @@ const cursor = {
     preToolUse: 'PreToolUse',
     postToolUse: 'PostToolUse',
     preCompact: 'PostCompact',
+    sessionStart: 'SessionStart',
     sessionEnd: 'SessionEnd',
   },
   // Check generic hooks too: a dedicated hook may be absent or have failed.
@@ -171,6 +173,9 @@ const cursor = {
     const session_id = raw.conversation_id;
 
     if (native === 'beforeSubmitPrompt') return { event, input: { session_id, prompt: raw.prompt } };
+
+    // Only what guard uses: the session and whether it is a background agent (no e-mail, model or folders).
+    if (native === 'sessionStart') return { event, input: { session_id, is_background_agent: raw.is_background_agent === true } };
 
     if (native === 'beforeShellExecution') return { event, input: { session_id, tool_name: 'Bash', tool_input: { command: raw.command } } };
 
@@ -193,10 +198,18 @@ const cursor = {
     const file = input.file_path ?? input.target_file ?? input.path ?? input.target ?? input.destination;
     const tool_name = /^(Write|Create|Delete|Remove|Move|Rename)/i.test(name) ? 'Write' : /^(Edit|Str_?Replace|Replace|MultiEdit)/i.test(name) ? 'Edit' : /^web_?fetch$/i.test(name) ? 'WebFetch' : name;
 
-    return { event, input: { session_id, tool_name, tool_input: tool_name === 'Write' || tool_name === 'Edit' ? { ...input, file_path: file } : input } };
+    const files = [...new Set([
+      ...(Array.isArray(input.files) ? input.files : []),
+      ...['file_path', 'target_file', 'path', 'source', 'source_path', 'from', 'destination', 'target', 'new_path', 'to', 'target_path', 'destination_path'].flatMap((key) => isText(input[key]) ? [input[key]] : []),
+    ])];
+
+    return { event, input: { session_id, tool_name, tool_input: tool_name === 'Write' || tool_name === 'Edit' ? { ...input, file_path: file, files } : input } };
   },
   render(event, out, { native, input = {} }) {
     if (native === 'beforeSubmitPrompt') return blocked(out) ? json({ continue: false, user_message: out.reason }) : json({ continue: true });
+
+    // Nothing to add at the start of a session (seen accepted by a real cursor-agent, 2026-10-01).
+    if (event === 'SessionStart') return json({});
 
     if (event === 'PreToolUse') {
       const d = decisionOf(out);
@@ -366,12 +379,41 @@ const devin = {
 const claude = {
   id: 'claude',
   name: 'Claude Code',
-  events: { SessionStart: 'SessionStart', UserPromptSubmit: 'UserPromptSubmit', PreToolUse: 'PreToolUse', PostToolUse: 'PostToolUse', PostCompact: 'PostCompact', SessionEnd: 'SessionEnd' },
+  events: { SessionStart: 'SessionStart', UserPromptSubmit: 'UserPromptSubmit', PreToolUse: 'PreToolUse', PostToolUse: 'PostToolUse', PostToolBatch: 'PostToolBatch', Stop: 'Stop', PostCompact: 'PostCompact', SessionEnd: 'SessionEnd' },
   normalize: (event, raw) => ({ event, input: raw }),
   render: (event, out) => (out ? json(out) : none),
 };
 
 export const ADAPTERS = { claude, codex, gemini, cursor, copilot, windsurf, devin };
+
+// Not decided by name (F6.12 round 2, D1): agents add and rename shell tools (Codex shell_command,
+// Cursor `shell`, Claude Monitor, an MCP "run"), so any tool guard has no own check for that carries a
+// command is checked as one. The original name stays in `shell_via`: its other arguments keep the
+// request checks.
+const OWN_CHECKS = /^(Bash|PowerShell|Write|Edit|MultiEdit|NotebookEdit|Read|NotebookRead|Grep|Glob|LS|TodoWrite|Task|Agent|AskUserQuestion|ExitPlanMode|WebFetch|WebSearch)$/;
+
+const COMMAND_FIELDS = ['command', 'cmd', 'script', 'command_line', 'commandLine', 'cmdline', 'shell_command', 'argv'];
+
+export function asShell(input) {
+  const ti = input?.tool_input;
+  const name = input?.tool_name;
+
+  // oxlint-disable-next-line anti-slop/no-runtime-typeof -- Validate untrusted JSON or assert the boundary contract; preserve primitive type checks.
+  if (typeof name !== 'string' || OWN_CHECKS.test(name) || !ti || typeof ti !== 'object' || Array.isArray(ti)) return input;
+
+  // oxlint-disable-next-line anti-slop/no-runtime-typeof -- Validate untrusted JSON or assert the boundary contract; preserve primitive type checks.
+  const c = COMMAND_FIELDS.map((k) => ti[k]).find((v) => (typeof v === 'string' && v.trim()) || (Array.isArray(v) && v.length));
+
+  if (c === undefined) return input;
+  const shell_args = Object.fromEntries(Object.entries(ti).filter(([k]) => !COMMAND_FIELDS.includes(k)));
+
+  return { ...input, tool_name: /power_?shell|pwsh/i.test(name) ? 'PowerShell' : 'Bash', shell_via: name, shell_args, tool_input: { ...ti, command: Array.isArray(c) ? c.map(String).join(' ') : c } };
+}
+
+for (const [id, adapter] of Object.entries(ADAPTERS)) {
+  adapter.spendCost = id === 'claude';
+  adapter.spendAsk = id === 'claude';
+}
 
 // A recoverable failure must not become permission in protect. An externally killed hook is still
 // subject to the host agent's timeout policy; no process can answer after it has been killed.

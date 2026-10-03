@@ -44,7 +44,7 @@ export function createSecretsAnalyzer(rules) {
     let s = secrets.get(key);
 
     if (!s) {
-      s = { key, ruleId: f.ruleId, shape: mask(f.secret), copies: 0, where: {}, sessions: new Set(), projects: new Set(), stores: new Set(), subagentCopies: 0, first: null, classes: [], seenInTestFile: false, inTranscripts: false, inConfig: false };
+      s = { key, ruleId: f.ruleId, masked: mask(f.secret), copies: 0, where: {}, sessions: new Set(), projects: new Set(), stores: new Set(), subagentCopies: 0, first: null, classes: [], seenInTestFile: false, inTranscripts: false, inConfig: false };
       secrets.set(key, s);
     }
 
@@ -110,7 +110,8 @@ export function createSecretsAnalyzer(rules) {
       return [...secrets.values()].map((s) => ({
         key: s.key,
         ruleId: s.ruleId,
-        shape: s.shape,
+        // oxlint-disable-next-line anti-slop/no-shape-in-symbol-names -- "shape" is the documented key of the audit finding schema (also in --json); renaming it would change the output.
+        shape: s.masked,
         classification: classifySecret(s.classes, { seenInTestFile: s.seenInTestFile, pastedByUser: s.pasted === true }),
         copies: s.copies,
         subagentCopies: s.subagentCopies,

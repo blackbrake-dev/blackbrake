@@ -5,6 +5,9 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { commandArgs, commandFor, findMenuRow, helpRows } from '../src/cli/registry.mjs';
+import { remindToResume, runResume } from '../src/cli/features/pause.mjs';
+import { runUninstall } from '../src/cli/features/uninstall-menu.mjs';
 import { createCostAnalyzer } from '../src/cost/analyzer.mjs';
 import { PRICES_DATE } from '../src/cost/prices.mjs';
 import { inventory } from '../src/load/inventory.mjs';
@@ -18,7 +21,10 @@ import { createVersionAnalyzer } from '../src/version.mjs';
 import { defaultRoot, listTranscripts } from '../src/transcripts.mjs';
 import { buildAdvice } from '../src/advice.mjs';
 import { renderAdvice, renderAudit, renderDetails } from '../src/ui/audit-view.mjs';
-import { confirm, confirmTyped, isInteractive, launchClaude, logLines, modeBadge, statusLines, statusLineText } from '../src/guard/cli.mjs';
+import { confirm, confirmTyped, isInteractive, launchClaude, logLines, modeBadge, pausedBadge, statusLines, statusLineText } from '../src/guard/cli.mjs';
+import { requireHuman } from '../src/guard/human.mjs';
+import { isPaused } from '../src/guard/pause.mjs';
+import { declareProgram } from '../src/guard/safety.mjs';
 import { guardInstalled, setup, uninstall } from '../src/guard/install.mjs';
 import { getMode, getSavedLang, getSetting, hasMode, MODES, readLog, setMode, setSavedLang, setSetting } from '../src/guard/state.mjs';
 import { runningAgents, severity, watch } from '../src/guard/watch.mjs';
@@ -155,7 +161,7 @@ function parseArgs(argv) {
     else if (a === '--lang') opts.lang = argv[++i];
     else if (a === '--agent') opts.agent = argv[++i];
     else if (!opts.command) opts.command = a;
-    else if (['mode', 'lang', 'window', 'background'].includes(opts.command) && !opts.rest.length) opts.rest.push(a);
+    else if (opts.rest.length < (['mode', 'lang', 'window', 'background'].includes(opts.command) ? 1 : commandArgs(opts.command))) opts.rest.push(a);
     else throw new Error(`Unknown argument: ${clean(a, 80)}`);
   }
 
@@ -242,7 +248,18 @@ function agentList(value) {
 }
 
 // Installs guard in the given agents, each on its own: one failure does not stop the others.
+// Paused ("blackbrake pause"): nothing is installed, switched on or changed until it is resumed, so
+// that no half-paused state exists. Uninstalling still works. Says so and returns true.
+function refusePaused(p) {
+  if (!isPaused()) return false;
+  print(['', `  ${pausedBadge(p)} ${p.cream(t('blackbrake is paused; run "blackbrake resume" first.'))}`, '']);
+  process.exitCode = 1;
+
+  return true;
+}
+
 function installIn(ids, p) {
+  if (refusePaused(p)) return null;
   const log = (m) => print([`  ${p.amber('✓')} ${t(m)}`]);
   const warn = (m) => print([`  ${p.amber('▲')} ${m}`]);
   const others = ids.filter((id) => id !== 'claude');
@@ -275,6 +292,8 @@ function installIn(ids, p) {
 }
 
 async function setupCommand(opts, p) {
+  if (refusePaused(p)) return false;
+
   // In a terminal, the first installation is the permissions checklist: everything on by default,
   // and the user switches off what they do not want. Scripts use --yes (all on) or --agent.
   // Saved, it goes on to the main menu.
@@ -318,6 +337,8 @@ async function setupCommand(opts, p) {
 // `blackbrake agents`: every harness found, and how blackbrake covers it.
 function agentsLines(p, { all = false } = {}) {
   const out = screen(p, t('AGENTS'), t('where blackbrake runs'), columns(), { pose: 'right', line: t('Inside the agents with hooks; from outside for the rest.') });
+
+  if (isPaused()) out.push(`  ${pausedBadge(p)} ${p.amber(t('You are not protected until you run "blackbrake resume".'))}`, '');
 
   for (const a of agentStatus().filter((x) => all || x.detected || x.installed)) {
     const state = a.installed ? p.green(`● ${t(a.kind === 'hooks' ? 'protected inside (hooks)' : 'watched (history and processes)')}`) : a.detected ? p.coral(`○ ${t('not protected')}`) : p.faint(t('not installed here'));
@@ -568,6 +589,8 @@ async function backgroundCommand(opts, p) {
 
   if (wanted && !['on', 'off'].includes(wanted)) throw new Error(t('Use "blackbrake background on" or "blackbrake background off".'));
 
+  if (wanted === 'on' && refusePaused(p)) return;
+
   if (wanted === 'on') {
     setSetting('autostart', true);
     buildRuntime();
@@ -576,7 +599,7 @@ async function backgroundCommand(opts, p) {
     // Switching the watcher off lowers protection: a person has to confirm it in a terminal.
     if (!(await confirmTyped(p, t('Stop the background watcher? Harnesses without hooks will no longer be watched.'), 'off', getLang() === 'es' ? 'apagar' : null))) {
       print(['', `  ${p.faint(t(isInteractive() ? 'Nothing changed.' : 'Nothing changed: this must be confirmed in an interactive terminal.'))}`, '']);
-      process.exitCode = isInteractive() ? 0 : 1;
+      process.exitCode = requireHuman().ok ? 0 : 1;
 
       return;
     }
@@ -615,6 +638,7 @@ function helpScreen(p) {
     row('blackbrake window on|off', 'alerts window when an agent starts'),
     row('blackbrake background on|off', 'hidden watcher at login'),
     row('blackbrake uninstall [--agent id]', 'remove it from every agent, or one'),
+    ...helpRows().map((r) => `${padEnd(`${p.orange(r.usage)} `, 34)}${p.cream(r.text)}`),
     row('blackbrake lang es|en|auto', 'language'),
     ]),
     '',
@@ -659,7 +683,7 @@ function permissionItems({ fresh = false } = {}) {
     { heading: true, label: t('How blackbrake runs') },
     { value: 'observe', label: t('Observe mode (recommended to start)'), on: fresh || getMode() === 'observe', hint: t('warns only; off = protect: stops risky steps') },
     { value: 'background', label: t('Background watcher at login'), on: fresh ? getSetting('autostart', true) : autostartInstalled(), hint: t('a login item that starts it hidden: {file}', { file: autostartFile() }) },
-    { value: 'window', label: t('Alerts window when an agent starts'), on: getSetting('window', true), hint: t('opens a terminal window with the live alerts') },
+    { value: 'window', label: t("Open blackbrake's live alerts when an AI harness starts"), on: getSetting('window', true), hint: t('separate from protection: turning it off does not turn guard off') },
     { value: 'notify', label: t('System notifications'), on: getSetting('notify', true), hint: t('for high and maximum alerts') },
     { value: 'sound', label: t('Sound'), on: getSetting('sound', true), hint: t('the terminal bell on high and maximum alerts') },
   );
@@ -726,6 +750,8 @@ const PROCEED = {
 };
 
 async function permissionsCommand(opts, p, { fresh = false, nextStep = 'back' } = {}) {
+  if (refusePaused(p)) return false;
+
   print(screen(p, t('PERMISSIONS'), t('where blackbrake runs and what it may do'), columns(), { pose: 'determined', line: t('You decide where I run. Lowering protection asks you to type a word.') }));
 
   // The first time, say plainly that everything starts switched on.
@@ -799,16 +825,18 @@ async function windowCommand(opts, p) {
 
   if (wanted && !['on', 'off'].includes(wanted)) throw new Error(t('Use "blackbrake window on" or "blackbrake window off".'));
 
+  if (wanted === 'on' && refusePaused(p)) return;
+
   // Hiding alerts lowers protection like the rest: a person confirms it in a terminal.
   if (wanted === 'off' && getSetting('window', true) && !(await confirmTyped(p, t('Stop opening the alerts window? Alerts will only show if you open them.'), 'off', getLang() === 'es' ? 'apagar' : null))) {
     print(['', `  ${p.faint(t(isInteractive() ? 'Nothing changed.' : 'Nothing changed: this must be confirmed in an interactive terminal.'))}`, '']);
-    process.exitCode = isInteractive() ? 0 : 1;
+    process.exitCode = requireHuman().ok ? 0 : 1;
 
     return;
   }
 
   if (wanted) setSetting('window', wanted === 'on');
-  print(['', `  ${p.faint(t('Alerts window when an agent starts'))} ${p.cream(t(getSetting('window', true) ? 'on' : 'off'))}`, '']);
+  print(['', `  ${p.faint(t("Open blackbrake's live alerts when an AI harness starts"))} ${p.cream(t(getSetting('window', true) ? 'on' : 'off'))}`, `  ${p.faint(t('Needs guard or the background watcher running.'))}`, '']);
 }
 
 async function modeCommand(opts, p) {
@@ -823,6 +851,8 @@ async function modeCommand(opts, p) {
 
   if (!MODES.includes(wanted)) throw new Error(t('Unknown mode "{m}". Use observe or protect.', { m: wanted }));
 
+  if (refusePaused(p)) return;
+
   if (wanted === current) {
     print(['', `  ${p.faint(t('Already in'))} ${modeBadge(p, current)}`, '']);
 
@@ -832,7 +862,7 @@ async function modeCommand(opts, p) {
   // Lowering protection needs a person at a terminal: the agent's shell has none.
   if (wanted === 'observe' && !(await confirmTyped(p, t('Switch guard to observe? Secrets will be reported but no longer stopped.'), 'observe', getLang() === 'es' ? 'observar' : null))) {
     print(['', `  ${p.faint(t(isInteractive() ? 'Mode unchanged.' : 'Mode unchanged: switching to observe must be confirmed in an interactive terminal.'))}`, '']);
-    process.exitCode = isInteractive() ? 0 : 1;
+    process.exitCode = requireHuman().ok ? 0 : 1;
 
     return;
   }
@@ -841,32 +871,11 @@ async function modeCommand(opts, p) {
   print(['', `  ${p.amber('✓')} ${t('guard is now in')} ${modeBadge(p, wanted)} ${p.faint(t(wanted === 'protect' ? 'secrets are stopped before they are sent' : 'warns and logs; nothing is stopped'))}`, '']);
 }
 
+// The flow lives in src/cli/features/uninstall-menu.mjs (the menu row shares it).
 async function uninstallCommand(opts, p) {
-  // Without --agent: every agent that has it.
-  const ids = opts.agent && opts.agent !== 'all' ? agentList(opts.agent) : agentStatus().filter((a) => a.installed).map((a) => a.id);
+  const code = await runUninstall(opts, p);
 
-  const question = opts.purge ? t('Remove guard and delete its log?') : t('Remove blackbrake from {list}?', { list: ids.map(nameOf).join(', ') || t('every agent') });
-
-  if (!(await confirmTyped(p, question, 'remove', getLang() === 'es' ? 'quitar' : null))) {
-    print(['', `  ${p.faint(t(isInteractive() ? 'Nothing changed.' : 'Nothing changed: removing guard must be confirmed in an interactive terminal.'))}`, '']);
-    process.exitCode = isInteractive() ? 0 : 1;
-
-    return;
-  }
-
-  const log = (m) => print([`  ${p.amber('✓')} ${t(m)}`]);
-
-  // --purge deletes ~/.blackbrake, which other agents' hooks run from: all of them must go, checked
-  // before anything is removed.
-  if (opts.purge && Object.values(AGENTS).some((a) => { if (ids.includes(a.id) || !fs.existsSync(a.configFile())) return false;
-
- try { return a.installed(true); } catch { return true; } })) throw new Error(t('Other agents still use guard; remove them too (--agent all) before --purge.'));
-
-  // Removing it from everything also stops the background watcher and its login item.
-  if ((!opts.agent || opts.agent === 'all') && removeAutostart()) log(t('Stopped the background watcher and removed its login item'));
-  uninstallAgents(ids.filter((id) => id !== 'claude'), { log });
-
-  if (ids.includes('claude')) uninstall({ keepLog: !opts.purge, log });
+  if (code) process.exitCode = code;
 }
 
 async function claudeCommand(opts, p) {
@@ -919,6 +928,8 @@ function tip(p, state) {
   const auditRun = safe(getSetting('last_audit', null));
   const maximum = readLog(undefined, { since: new Date(Date.now() - 864e5).toISOString() }).filter((e) => severity(e) === 'critical').length;
 
+  if (state.paused) return say(p, 'sleep', p.amber(t('PAUSED — nothing is protecting your agents')));
+
   if (!state.installed) return say(p, 'worried', t('I am not protecting any agent yet. Open "Protection and permissions".'));
 
   if (maximum) return say(p, 'alert', t('{n} maximum alert(s) in the last 24 h. See them in "Live session".', { n: maximum }));
@@ -953,11 +964,29 @@ async function welcome(opts, p) {
   if (next === 'scan') scanCommand(opts, p);
 }
 
+// Rows that features registered (src/cli/registry.mjs) run themselves. Returns null when `value`
+// is not one of them, else what the row returned ({ exit: true } ends the session).
+async function runFeatureRow(value, state, opts, p) {
+  const row = findMenuRow(value);
+
+  if (!row) return null;
+  await transition(p);
+
+  return (await row.run({ p, opts, print, pkg, state })) ?? {};
+}
+
 // Home screen loop: guard, audit, then precautions or details, then back to the menu.
 async function interactive(opts, p) {
   let again = false;
 
   if (!getSetting('welcomed', false)) await welcome(opts, p);
+
+  // Paused for more than a day: ask once when the menu opens (a pause never expires by itself).
+  if (remindToResume()) {
+    print(['', say(p, 'sleep', p.amber(t('PAUSED — nothing is protecting your agents')))]);
+
+    if (await confirm(p, t('Resume now?'))) await runResume(p, { print });
+  }
 
   for (;;) {
     try {
@@ -967,6 +996,7 @@ async function interactive(opts, p) {
         installed: agents.some((a) => a.installed),
         claude: agents[0].installed,
         mode: getMode(),
+        paused: isPaused(),
         protectedCount: agents.filter((a) => a.installed).length,
         detectedCount: agents.filter((a) => a.detected || a.installed).length,
         running: liveState().agents.length,
@@ -989,10 +1019,30 @@ async function interactive(opts, p) {
         return;
       }
 
+      // A row a feature registered on the main menu runs itself.
+      const featured = await runFeatureRow(group, state, opts, p);
+
+      if (featured?.exit) return;
+
+      if (featured) {
+        await backToMenu(p);
+        continue;
+      }
+
       // The group's screen; "back" returns to the main menu.
       const action = await category(p, group, state);
 
       if (!action) continue;
+
+      // Same for a row a feature registered inside a group.
+      const inGroup = await runFeatureRow(action, state, opts, p);
+
+      if (inGroup?.exit) return;
+
+      if (inGroup) {
+        await backToMenu(p);
+        continue;
+      }
 
       // What the user opens now is all the terminal shows.
       await transition(p);
@@ -1113,9 +1163,20 @@ async function interactive(opts, p) {
   }
 }
 
-const help = () => (getLang() === 'es' ? HELP_ES : HELP);
+// The help text, with the commands that features registered listed before the language section.
+function help() {
+  const base = getLang() === 'es' ? HELP_ES : HELP;
+  const rows = helpRows();
+
+  if (!rows.length) return base;
+  const block = `${t('More commands:')}\n${rows.map((r) => `  ${padEnd(`${r.usage} `, 32)}${r.text}`).join('\n')}`;
+
+  return base.replace(/\n\n(Language|Idioma):/, (_, head) => `\n\n${block}\n\n${head}:`);
+}
 
 async function main() {
+  // This is the blackbrake program: it may change its own folder (src/guard/safety.mjs).
+  declareProgram();
   let opts;
 
   try {
@@ -1185,12 +1246,25 @@ async function main() {
     statusline: () => console.log(statusLineText(createPainter(3), readStdinJson())),
   };
 
-  if (!commands[opts.command]) {
+  // Built-in commands win; then the ones features registered (src/cli/registry.mjs), whose
+  // run() resolves to an exit code.
+  const feature = commandFor(opts.command);
+  const builtIn = Object.hasOwn(commands, opts.command) ? commands[opts.command] : null;
+
+  if (!builtIn && !feature) {
     console.error(`${t('Unknown command: {c}', { c: clean(opts.command, 80) })}\n\n${help()}`);
     process.exit(2);
   }
 
-  await commands[opts.command]();
+  if (builtIn) {
+    await builtIn();
+
+    return;
+  }
+
+  const code = await feature.run({ p, opts, print, pkg });
+
+  if (code) process.exitCode = code;
 }
 
 main().catch((e) => {

@@ -10,8 +10,11 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { isBackgroundRunning } from './background.mjs';
+import { classify } from './classify.mjs';
 import { assertNoLinks } from './install.mjs';
 import { loginItemFile } from './policy.mjs';
+import { bootoutLaunchAgent, stopBlackbrake } from './procs.mjs';
+import { mayChange, mayStop } from './safety.mjs';
 import { guardHome } from './state.mjs';
 import { systemProgram } from './window.mjs';
 
@@ -25,7 +28,8 @@ const xml = (s) => s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, 
 
 export function autostartContent(node, script, platform = process.platform) {
   // VBScript doubles its quotes; the others must not see quotes, $, backslashes (Linux) at all.
-  if (/["\r\n]/.test(node + script) || (platform !== 'win32' && platform !== 'darwin' && UNSAFE.test(node + script))) return null;
+  // Windows Script Host expands %VAR% inside Run (review C, 2026-10-01): no '%' on Windows either.
+  if (/["\r\n]/.test(node + script) || (platform === 'win32' && script.includes('%')) || (platform !== 'win32' && platform !== 'darwin' && UNSAFE.test(node + script))) return null;
 
   if (platform === 'win32') return `' blackbrake: background watcher for your AI agents (remove with "blackbrake uninstall")\r\nCreateObject("WScript.Shell").Run """${node}"" ""${script}"" --background", 0, False\r\n`;
 
@@ -42,6 +46,7 @@ export const autostartInstalled = () => fs.existsSync(autostartFile());
 
 // Writes the login item and starts the watcher now (hidden), unless one is already running.
 export function installAutostart({ home = guardHome(), start = true, file = autostartFile() } = {}) {
+  mayChange(path.resolve(file));
   const content = autostartContent(process.execPath, watchScript(home));
 
   if (!content) throw new Error(`The paths to node or to blackbrake have characters a login item cannot hold safely: ${process.execPath}`);
@@ -76,9 +81,12 @@ export function installAutostart({ home = guardHome(), start = true, file = auto
 // the argument area, so /proc and ps show the title instead of the script path: both count. The
 // alerts window ('blackbrake watch') does not, nor a program that merely has it as an argument: the
 // title leads the whole command line. This decides whether uninstall may kill a pid.
-const WATCHER = /watch-main\.mjs|^blackbrake watcher(?![\w-])/;
+// Strict: the process must BE node running watch-main.mjs --background (src/guard/classify.mjs).
+const watcherOf = (home, platform) => ({ test: (cmd) => classify(cmd, { home, platform }) === 'watcher' });
 
-export function isWatcherProcess(pid, { platform = process.platform, run = spawnSync, read = fs.readFileSync, find = systemProgram } = {}) {
+export function isWatcherProcess(pid, { platform = process.platform, run = spawnSync, read = fs.readFileSync, find = systemProgram, home = guardHome() } = {}) {
+  const WATCHER = watcherOf(home, platform);
+
   try {
     if (platform === 'linux') return WATCHER.test(String(read(`/proc/${pid}/cmdline`, 'utf8')).replace(/\0/g, '\n'));
     const ps = find(platform === 'win32' ? 'tasklist.exe' : 'ps', { platform });
@@ -94,14 +102,29 @@ export function isWatcherProcess(pid, { platform = process.platform, run = spawn
     const pwsh = systemProgram('powershell.exe', { platform });
     const q = pwsh && run(pwsh, ['-NoProfile', '-NonInteractive', '-Command', `(Get-CimInstance Win32_Process -Filter "ProcessId=${Number(pid)}").CommandLine`], { encoding: 'utf8', windowsHide: true, timeout: 10000 });
 
-    return Boolean(q) && String(q.stdout).includes('watch-main.mjs');
+    return Boolean(q) && WATCHER.test(String(q.stdout).trim());
   } catch {
     return false;
   }
 }
 
-export function removeAutostart({ home = guardHome(), file = autostartFile(), kill = true } = {}) {
+// Removes the login item and stops the background watcher.
+//   default  the watcher named by the pid file, after checking the pid is really blackbrake's
+//            (`background off`, `permissions`: they only touch this folder's watcher).
+//   sweep    the whole process table instead (src/guard/procs.mjs), for uninstall and pause: every
+//            watcher of this user, whichever folder it runs from, each re-verified before it is
+//            signalled; `windows` also closes the alerts windows. On macOS launchd is told to let
+//            go of the login item too (only for the user's real one: a custom `file` is somebody's
+//            test or another copy). `onSweep` receives what a second sweep still found:
+//            { watchers: { found, remaining }, windows: { found, remaining }, launchd }.
+// Returns whether the login item file was removed.
+export function removeAutostart({ home = guardHome(), file = autostartFile(), kill = true, sweep = false, windows = false, sweepOptions = {}, launchd = file === autostartFile(), onSweep = null } = {}) {
   let removed = false;
+
+  mayChange(path.resolve(file));
+
+  // Stopping processes without injected ones (sweepOptions.kill) is the program's job only.
+  if (kill) mayStop({ injected: Boolean(sweepOptions.kill) });
 
   try {
     const st = fs.lstatSync(file);
@@ -115,12 +138,21 @@ export function removeAutostart({ home = guardHome(), file = autostartFile(), ki
     }
   } catch { /* not there */ }
 
+  if (sweep && kill) {
+    const unloaded = launchd ? bootoutLaunchAgent(sweepOptions) : 'skipped';
+    const stopped = stopBlackbrake({ windows, home, ...sweepOptions });
+
+    onSweep?.({ ...stopped, launchd: unloaded });
+
+    return removed;
+  }
+
   // Stop the running watcher, after checking that the pid really is a node process running
   // blackbrake's watcher (a planted pid file must not make this kill something else).
   try {
     const pid = Number.parseInt(fs.readFileSync(path.join(home, 'watch-bg.pid'), 'utf8'), 10);
 
-    if (kill && Number.isInteger(pid) && pid > 0 && isBackgroundRunning(home) && isWatcherProcess(pid)) process.kill(pid);
+    if (kill && Number.isInteger(pid) && pid > 0 && isBackgroundRunning(home) && isWatcherProcess(pid, { home })) process.kill(pid);
   } catch { /* not running */ }
 
   return removed;

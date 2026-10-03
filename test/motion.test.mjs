@@ -1,9 +1,11 @@
 // Brakey's poses and sizes, the panels (header, box, bubble), loading indicators and transitions:
 // motion only on an interactive terminal, always ending in text, never touching a file or a pipe.
 import assert from 'node:assert/strict';
+import os from 'node:os';
 import { test } from 'node:test';
 import { goodbyeScene, progressBar, report, spinner, transition } from '../src/ui/motion.mjs';
 import { box, bubble, createPainter, mascot, mascotMedium, MEDIUM_WIDTH, POSES, strip, truncate, width } from '../src/ui/term.mjs';
+import { isFunction } from '../src/kinds.mjs';
 
 const sink = (isTTY = true) => ({ isTTY, rows: 20, columns: 60, text: '', write(s) { this.text += s; } });
 
@@ -48,7 +50,9 @@ test('loading: nothing moves on a pipe; on a terminal it ends with a line of tex
   s2.update('Scanning Cursor', [2, 4]);
   await new Promise((r) => setTimeout(r, 20));
   s2.stop();
+  // oxlint-disable-next-line no-control-regex -- the test checks cursor escape codes
   assert.match(tty.text, /\x1b\[\?25l/);
+  // oxlint-disable-next-line no-control-regex -- the test checks cursor escape codes
   assert.match(tty.text, /\x1b\[\?25h$/, 'the cursor is always given back');
   assert.match(strip(tty.text), /Scanning Cursor/);
   assert.match(strip(progressBar(p, 5, 10, 10)), /^█+▌░+$/);
@@ -56,8 +60,15 @@ test('loading: nothing moves on a pipe; on a terminal it ends with a line of tex
 
 test('the alerts window does not inherit what an agent sets to switch colour or motion off', async () => {
   const { windowEnv } = await import('../src/guard/window.mjs');
-  const env = windowEnv({ PATH: '/x', NO_COLOR: '1', TERM: 'dumb', CI: '1', FORCE_COLOR: '0', BLACKBRAKE_NO_ANIMATION: '1', ACCESSIBLE: '1', BLACKBRAKE_HOME: '/evil', NODE_OPTIONS: '--require ./x.js', NODE_PATH: '/r', LD_PRELOAD: '/r/x.so', DYLD_INSERT_LIBRARIES: '/r/x', LANG: 'es_ES.UTF-8' }, '/h/.blackbrake');
-  assert.deepEqual(Object.keys(env).sort(), ['ACCESSIBLE', 'BLACKBRAKE_HOME', 'LANG', 'PATH'], 'only what a terminal needs; nothing that switches colour off or loads code');
+  const env = windowEnv({ HOME: '/planted', XDG_CONFIG_HOME: '/planted/config', XDG_DATA_HOME: '/planted/data', PATH: '/x', NO_COLOR: '1', TERM: 'dumb', CI: '1', FORCE_COLOR: '0', BLACKBRAKE_NO_ANIMATION: '1', ACCESSIBLE: '1', BLACKBRAKE_HOME: '/evil', NODE_OPTIONS: '--require ./x.js', NODE_PATH: '/r', LD_PRELOAD: '/r/x.so', DYLD_INSERT_LIBRARIES: '/r/x', LANG: 'es_ES.UTF-8' }, '/h/.blackbrake');
+  const keys = ['ACCESSIBLE', 'BLACKBRAKE_HOME', 'LANG', 'PATH'];
+
+  if (process.platform !== 'win32') {
+    keys.push('HOME');
+    assert.equal(env.HOME, os.userInfo().homedir, 'terminal configuration comes from the account');
+  }
+
+  assert.deepEqual(Object.keys(env).sort(), keys.sort(), 'only what a terminal needs; nothing that switches colour off or loads code');
   assert.equal(env.BLACKBRAKE_HOME, '/h/.blackbrake', "guard's own folder, not the one the agent set");
 });
 
@@ -73,7 +84,7 @@ test('main menu: the name shines now and then; the chosen row wears Brakey; the 
   assert.match(rows[0], /▐••▌ 1 {2}Live session/, 'Brakey in its orange box points at the chosen row, with its number');
   assert.match(rows[1], /· {2}2 {2}Audit/);
   assert.match(rows[0], /○ ACTIVE/, 'the badge dot changes with the beat');
-  assert.equal(typeof headerLife(p, '1.0.0', { out: sink(false) }), 'function', 'no terminal: nothing starts');
+  assert.ok(isFunction(headerLife(p, '1.0.0', { out: sink(false) })), 'no terminal: nothing starts');
 });
 
 test('transitions and scenes: a terminal gets a wipe then a clean screen; a pipe gets nothing', async () => {
