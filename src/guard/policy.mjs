@@ -597,6 +597,71 @@ const HOOKS_OFF = /"?hooks"?\s*[:=]\s*\{\s*\}|"?hooks"?\s*[:=]\s*\{[^}]{0,200}?"
 const GUARD_IN_SHELL = /\.blackbrake\b|blackbrake-watch\.(vbs|desktop)|dev\.blackbrake\.watch|\.b(l(a(c(k[a-z]*)?)?)?)?[*?[]|\.[?*[][a-z*?[\]]*ackbrake|(~|\$HOME|\$env:USERPROFILE|%USERPROFILE%)[\\/]+\.?[*?[]|\{[^}]*\.b(l(a(c(k[a-z]*)?)?)?)?[,}*?]/i;
 
 
+// guard's folder spelled through an expansion the check cannot resolve (round 2, V2): an unset
+// variable (.black${z}brake), a command ($(printf brake)), indirection (${!n}, declare -n), arrays and
+// slices, positional words, PowerShell variables and $(…), cmd's !d! and %d:x=c%, for-loop variables.
+// Not resolved: each expansion becomes a gap, and a gap next to part of the name, or right after the
+// home folder, is treated as naming guard's folder. String transforms (-replace, [char]) are covered
+// by a near-miss of the name. Known false positive, accepted: writing to `~/$X` directly in home.
+const HOME_REF = /\$\{?env:(USERPROFILE|HOME)\}?|%USERPROFILE%|%HOMEDRIVE%%HOMEPATH%|\$\{HOME(?:[:-][^{}]*)?\}|\$HOME\b/gi;
+
+const UNRESOLVED = /\$\{?env:\w+\}?|\$\{[^{}]*\}|\$\([^()]*\)|\$\w+|\$[@*#?!$]|`[^`]*`|%%?\w+(?::[^%\s]*)?%|%%?[a-z]|![\w:~=,-]+!|\[char\]\s*\d+/gi;
+
+const GAP_PREFIX = /(^|[\s\\/"'=(+])\.b(l(a(c(k(b(r(a(k)?)?)?)?)?)?)?)?\0/i;
+
+const GAP_SUFFIX = /\0+[a-z]{0,9}rake(?=[\\/]|["')\s]*$|["')\s]*[;&|])/i;
+
+const GAP_AFTER_HOME = /~[\\/]+\.?\0/;
+
+function nearGuardName(word) {
+  const a = word.toLowerCase();
+  const b = '.blackbrake';
+
+  if (Math.abs(a.length - b.length) > 2) return false;
+  let prev = Array.from({ length: b.length + 1 }, (_, j) => j);
+
+  for (let i = 1; i <= a.length; i++) {
+    const row = [i];
+
+    for (let j = 1; j <= b.length; j++) row.push(Math.min(prev[j] + 1, row[j - 1] + 1, prev[j - 1] + (a[i - 1] === b[j - 1] ? 0 : 1)));
+    prev = row;
+  }
+
+  return prev[b.length] <= 2;
+}
+
+// Variables given a plain literal value in the command itself (d=.ssh, $p = 'x'): shellViews resolves
+// those, so they are not gaps. A bash nameref (declare -n r=d) is not a value.
+function literalNames(command) {
+  const names = new Set();
+
+  for (const m of String(command).matchAll(/(?:^|[\s;&|(])\$?([A-Za-z_]\w*)\s*=\s*(["']?)([^\s;&|$`()'"]+)\2(?=[\s;&|)]|$)/g)) names.add(m[1].toLowerCase());
+
+  for (const m of String(command).matchAll(/\b(?:declare|typeset|local)\s+-\w*n\w*\s+([A-Za-z_]\w*)/g)) names.delete(m[1].toLowerCase());
+
+  return names;
+}
+
+export function guardThroughGap(view, command = view) {
+  const known = literalNames(command);
+  let v = unquote(view).replace(HOME_REF, '~');
+
+  for (let i = 0; i < 8; i++) {
+    const next = v.replace(UNRESOLVED, (m) => (known.has(m.replace(/^\$\{?|\}$/g, '').toLowerCase()) ? m : '\0'));
+
+    if (next === v) break;
+    v = next;
+  }
+
+  // Pieces joined with + (PowerShell, JavaScript) are one word to the check.
+  v = v.replace(/\s*\+\s*/g, '');
+
+  if (GAP_PREFIX.test(v) || GAP_SUFFIX.test(v) || GAP_AFTER_HOME.test(v)) return true;
+  const closed = v.replaceAll('\0', '');
+
+  return GUARD_IN_SHELL.test(closed) || (closed.match(/\.b[a-z]{6,12}/gi) ?? []).some(nearGuardName);
+}
+
 // Commands that only read. Each part of a command line (split on pipes, ;, &&, ||, &, newlines)
 // must start with one of these, with no redirection, no command substitution and none of the
 // writing flags some of them have (find -delete/-exec, sort -o, tee is not listed).
@@ -702,8 +767,9 @@ function blackbrakeRunsNonRead(view) {
   // Indirection the check cannot follow, next to blackbrake: ${!name}, "$@", $*.
   if (/\$\{!|\$\{?[@*]/.test(text)) return true;
 
-  // Parts and the separator after each: [part, sep, part, sep, …, part].
-  const pieces = text.split(/(\|\||&&|[|;&\n(){}`]|\$\()/);
+  // Parts and the separator after each: [part, sep, part, sep, …, part]. An escaped separator is a
+  // literal character to the shell (grep "a\|b", find … \;), not a new part.
+  const pieces = text.replace(/\\[|;&()]/g, ' ').split(/(\|\||&&|[|;&\n(){}`]|\$\()/);
 
   for (let k = 0; k < pieces.length; k += 2) {
     const words = pieces[k].trim().split(/\s+/).filter(Boolean);
@@ -764,10 +830,13 @@ export function tamper(tool, input = {}, ctx = {}, commandViews = null) {
     // Naming blackbrake's files or an agent's hook config is fine only for commands known to just
     // read (an allow-list: a list of writing verbs can never be complete). Checked on the command as
     // written, without quotes, and resolved (variables, joined pieces, paths after a cd).
-    const views = [...new Set((commandViews ?? shellViews(cmd)).flatMap((v) => [v, unquote(v), asRun(v)]))];
+    const shown = commandViews ?? shellViews(cmd);
+    const views = [...new Set(shown.flatMap((v) => [v, unquote(v), asRun(v)]))];
+    // The most resolved view: what is still an expansion there could not be followed.
+    const resolved = shown.at(-1) ?? cmd;
     const readOnly = readOnlyCommand(cmd);
 
-    if (views.some((v) => SHELL_TAMPER.test(v) || blackbrakeRunsNonRead(v)) || lowersThroughWrapper(cmd) || (views.some((v) => GUARD_IN_SHELL.test(v)) && !readOnly)) return t('it would change or switch off blackbrake');
+    if (views.some((v) => SHELL_TAMPER.test(v) || blackbrakeRunsNonRead(v)) || lowersThroughWrapper(cmd) || (!readOnly && (views.some((v) => GUARD_IN_SHELL.test(v)) || guardThroughGap(cmd) || guardThroughGap(resolved, cmd)))) return t('it would change or switch off blackbrake');
 
     if ((views.some((v) => CLAUDE_CONFIG_IN_SHELL.test(v)) || (input.files ?? []).some((f) => protectedTarget(f, ctx))) && !readOnly) return t('it changes a coding agent\'s configuration through the shell, where the change cannot be checked; use the Edit tool instead');
 

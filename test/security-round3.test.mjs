@@ -138,6 +138,51 @@ test('V1 controls: reading with blackbrake and naming it stay allowed', () => {
     'grep -rn blackbrake src',
     'git log --oneline | grep blackbrake',
     'blackbrake help',
+    'grep -rn "mailto\\|@blackbrake" ../content public/',
+  ]) assert.equal(refused(command), false, command);
+});
+
+// ---------- V2: guard's folder spelled through expansions that cannot be resolved ----------
+
+test('V2 writes to guard\'s folder built from unresolved expansions are refused', () => {
+  const allowed = [
+    'echo x > ~/.black${z}brake/state.json',
+    'echo x > ~/.black$(printf brake)/state.json',
+    "printf -v d '%s' .black; echo x > ~/${d}brake/state.json",
+    'set -- .black brake; echo x > ~/$1$2/state.json',
+    'n=d; d=.black; echo x > ~/${!n}brake/state.json',
+    'declare -n r=d; d=.black; echo x > ~/${r}brake/state.json',
+    'a=(.black brake); echo x > ~/${a[0]}${a[1]}/state.json',
+    'A=.blackbrakeX; echo x > ~/${A::-1}/state.json',
+    'cd ~ && rm -rf .b$(printf lackbrake)',
+    'Set-Variable p .black; sc "$HOME\\$($p)brake\\state.json" x',
+    "New-Variable -Name p -Value '.bl'; Set-Content \"~\\${p}ackbrake\\state.json\" x",
+    'sv p .blac; sc "$env:USERPROFILE\\${p}kbrake\\state.json" 1',
+    "sc \"~\\.black$('brake')\\state.json\" 1",
+    "$p = ('.black','brake') -join ''; sc \"~\\$p\\state.json\" 1",
+    'sc "~\\.black${env:NOPE}brake\\state.json" 1',
+    'sc "~\\.black$($null)brake\\state.json" 1',
+    'sc ("~\\.bla" + [char]99 + "kbrake\\state.json") 1',
+    "sc (\"~\\.blaXkbrake\\state.json\" -replace 'X','c') 1",
+    'cmd /v:on /c "set d=.black& set e=brake& echo x > %USERPROFILE%\\!d!!e!\\state.json"',
+    'cmd /c "set d=.blaxkbrake& call echo x > %USERPROFILE%\\%d:x=c%\\state.json"',
+    "for /f %i in ('echo .black') do echo x > %USERPROFILE%\\%ibrake\\state.json",
+  ].filter((command) => !refused(command));
+
+  assert.deepEqual(allowed, []);
+});
+
+test('V2 controls: ordinary expansions and reading stay allowed', () => {
+  for (const command of [
+    'echo $HOME',
+    'ls ~/${DIR}',
+    'cat ~/.black${z}brake/state.json',
+    'cp a.txt ~/projects/${NAME}/',
+    'rm -rf build/${x}',
+    'mkdir -p "$HOME/.config/app"',
+    'bundle exec rake db:migrate',
+    "$d = Get-Date; Write-Output $d",
+    'for i in 1 2 3; do echo $i > out$i.txt; done',
   ]) assert.equal(refused(command), false, command);
 });
 
