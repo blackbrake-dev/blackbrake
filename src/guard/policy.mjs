@@ -680,37 +680,64 @@ const VALUE_FLAGS = new Set(['--path', '--home', '--lang', '--agent', '--days'])
 
 const LAUNCHERS = new Set(['env', 'sudo', 'doas', 'nohup', 'time', 'command', 'exec', 'builtin', 'nice', 'ionice', 'timeout', 'stdbuf', 'xargs', 'parallel', 'setsid', 'chroot', 'cmd', 'call', 'start', 'bash', 'sh', 'zsh', 'dash', 'fish', 'ksh', 'pwsh', 'powershell', 'node', 'bun', 'deno', 'npx', 'bunx', 'pnpm', 'pnpx', 'npm', 'yarn', 'volta', 'winpty', 'script', 'expect', 'unbuffer', 'watch', 'then', 'do', 'else', 'if', 'while', 'until', 'start-process', 'invoke-command', 'icm']);
 
+// The subcommands that change something (bin/blackbrake.mjs and src/cli/features): wherever blackbrake
+// appears, it followed by one of these is refused. A launcher list can never be complete (flock,
+// taskset, strace, ssh, su, find -exec, git aliases…), so position alone does not decide (round 2, V1).
+const BLACKBRAKE_CHANGES = new Set(['setup', 'uninstall', 'mode', 'lang', 'watch', 'window', 'fix', 'background', 'permissions', 'claude', 'statusline', 'pause', 'resume', 'report', 'stop']);
+
+// Naming blackbrake under another name: shell and PowerShell aliases, cmd macros.
+const ALIAS_VERBS = /^(alias|set-alias|new-alias|sal|nal|doskey)$/i;
+
+// The program inside a word: after `=` or `!` (alias.x=!blackbrake, bb=blackbrake) and after the
+// folders, in either slash (C:\x\blackbrake.cmd).
+const programOf = (word) => word.split('=').pop().replace(/^[!&@<>|]+/, '').split(/[\\/]/).pop();
+
+const isBlackbrake = (word) => BLACKBRAKE_TOKEN.test(programOf(word));
+
 function blackbrakeRunsNonRead(view) {
+  const text = String(view);
+
+  if (!/blackbrake/i.test(text)) return false;
+
+  // Indirection the check cannot follow, next to blackbrake: ${!name}, "$@", $*.
+  if (/\$\{!|\$\{?[@*]/.test(text)) return true;
+
   // Parts and the separator after each: [part, sep, part, sep, …, part].
-  const pieces = String(view).split(/(\|\||&&|[|;&\n(){}`]|\$\()/);
+  const pieces = text.split(/(\|\||&&|[|;&\n(){}`]|\$\()/);
 
   for (let k = 0; k < pieces.length; k += 2) {
-    const part = pieces[k];
-    const words = part.trim().split(/\s+/).filter(Boolean);
-
+    const words = pieces[k].trim().split(/\s+/).filter(Boolean);
     let i = 0;
 
-    while (i < words.length && (/^[\w.-]+=/.test(words[i]) || words[i] === '!')) i++;
+    // Assignments, `!` and redirections before the program (`>/dev/null blackbrake …`).
+    while (i < words.length && (/^[\w.-]+=/.test(words[i]) || words[i] === '!' || /^\d*[<>]/.test(words[i]))) i++;
 
-    const first = (words[i] ?? '').toLowerCase().replace(/\.(exe|cmd|bat|ps1)$/, '').split(/[/]/).pop();
+    if (ALIAS_VERBS.test(words[i] ?? '') && words.some(isBlackbrake)) return true;
 
-    if (!LAUNCHERS.has(first) && !BLACKBRAKE_TOKEN.test(words[i] ?? '')) continue;
+    const first = (words[i] ?? '').toLowerCase().replace(/\.(exe|cmd|bat|ps1)$/, '').split(/[\\/]/).pop();
+    const launched = LAUNCHERS.has(first);
 
-    const at = words.findIndex((x, j) => j >= i && BLACKBRAKE_TOKEN.test(x));
+    for (let at = i; at < words.length; at++) {
+      if (!isBlackbrake(words[at])) continue;
 
-    if (at < 0) continue;
+      // Read the words the way bin/blackbrake.mjs parseArgs does: a flag that takes a value swallows
+      // the next word (`blackbrake --path status pause` runs pause), every other flag is skipped.
+      let j = at + 1;
 
-    // Read the words the way bin/blackbrake.mjs parseArgs does: a flag that takes a value swallows
-    // the next word (`blackbrake --path status pause` runs pause), every other flag is skipped.
-    let j = at + 1;
+      while (j < words.length && words[j].startsWith('-')) j += VALUE_FLAGS.has(words[j].toLowerCase()) ? 2 : 1;
+      const sub = (words[j] ?? '').toLowerCase();
 
-    while (j < words.length && words[j].startsWith('-')) j += VALUE_FLAGS.has(words[j].toLowerCase()) ? 2 : 1;
+      if (BLACKBRAKE_CHANGES.has(sub)) return true;
 
-    if (j < words.length && !BLACKBRAKE_READ_SUBCOMMANDS.has(words[j].toLowerCase())) return true;
+      // Where it is clearly the program being run, anything but a read-only subcommand is refused.
+      if (at !== i && !launched) continue;
 
-    // No subcommand in sight because an expansion builds it (`blackbrake $(echo pau)se`) or it
-    // arrives on stdin (`echo pause | xargs blackbrake`, `parallel blackbrake ::: pause`): refused.
-    if (j >= words.length && (/^(\$\(|`|\(|\{)$/.test(pieces[k + 1] ?? '') || words.slice(0, at).some((w) => /^(xargs|parallel)$/i.test(w)) || words.slice(at).includes(':::'))) return true;
+      if (sub && !BLACKBRAKE_READ_SUBCOMMANDS.has(sub)) return true;
+
+      // No subcommand in sight because an expansion builds it (`blackbrake $(echo pau)se`) or it
+      // arrives on stdin (`echo pause | xargs blackbrake`, `parallel blackbrake ::: pause`): refused.
+      if (!sub && (/^(\$\(|`|\(|\{)$/.test(pieces[k + 1] ?? '') || words.slice(0, at).some((w) => /^(xargs|parallel)$/i.test(w)) || words.includes(':::'))) return true;
+    }
   }
 
   return false;
@@ -740,7 +767,7 @@ export function tamper(tool, input = {}, ctx = {}, commandViews = null) {
     const views = [...new Set((commandViews ?? shellViews(cmd)).flatMap((v) => [v, unquote(v), asRun(v)]))];
     const readOnly = readOnlyCommand(cmd);
 
-    if (views.some((v) => SHELL_TAMPER.test(v)) || blackbrakeRunsNonRead(cmd) || lowersThroughWrapper(cmd) || (views.some((v) => GUARD_IN_SHELL.test(v)) && !readOnly)) return t('it would change or switch off blackbrake');
+    if (views.some((v) => SHELL_TAMPER.test(v) || blackbrakeRunsNonRead(v)) || lowersThroughWrapper(cmd) || (views.some((v) => GUARD_IN_SHELL.test(v)) && !readOnly)) return t('it would change or switch off blackbrake');
 
     if ((views.some((v) => CLAUDE_CONFIG_IN_SHELL.test(v)) || (input.files ?? []).some((f) => protectedTarget(f, ctx))) && !readOnly) return t('it changes a coding agent\'s configuration through the shell, where the change cannot be checked; use the Edit tool instead');
 

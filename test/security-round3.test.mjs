@@ -7,6 +7,8 @@ import os from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
 import { fileURLToPath } from 'node:url';
+import { decide } from '../src/guard/policy.mjs';
+import { loadRules } from '../src/secrets/engine.mjs';
 
 const HOOK = fileURLToPath(new URL('../src/guard/hook.mjs', import.meta.url));
 
@@ -91,6 +93,52 @@ test('D1 a shell-shaped MCP call keeps its request checks', (t) => {
   assert.equal(other.denied, true, 'guard\'s files named in another argument');
   const reading = run(observe, 'codex', 'PreToolUse', { tool_name: 'shell_command', tool_input: { command: 'cat ~/.blackbrake/state.json' } });
   assert.equal(reading.denied, false, 'reading guard\'s state through a renamed shell tool is fine');
+});
+
+// ---------- V1: running blackbrake past the read-only allowlist ----------
+
+const ctx = { mode: 'observe', home: '/home/u', guardDir: '/home/u/.blackbrake', rules: loadRules() };
+
+const refused = (command) => decide('PreToolUse', { tool_name: 'Bash', tool_input: { command } }, ctx).output?.hookSpecificOutput?.permissionDecision === 'deny';
+
+test('V1 blackbrake run through quotes, launchers, aliases or indirection is refused', () => {
+  const allowed = [
+    'bash -c "blackbrake --json pause"',
+    '"blackbrake" --json pause',
+    "'blackbrake' --lang en mode observe",
+    'find . -exec blackbrake --json pause ;',
+    'a=blackbrake; b=a; ${!b} pause',
+    'powershell -Command "blackbrake --json pause"',
+    '& "C:\\x\\blackbrake.ps1" --json pause',
+    'C:\\x\\blackbrake.cmd --json pause',
+    '>/dev/null blackbrake --json pause',
+    'flock /tmp/l blackbrake --json pause',
+    'taskset 1 blackbrake --json uninstall',
+    'strace -f blackbrake --json pause',
+    'ssh localhost blackbrake --json pause',
+    'su -c "blackbrake --json pause" u',
+    "git -c alias.x='!blackbrake --json pause' x",
+    'Set-Alias bb blackbrake; bb pause',
+    'sal bb blackbrake; bb --json pause',
+    'alias bb=blackbrake\nbb pause',
+    'f() { blackbrake "$@"; }; f pause',
+    'doskey bb=blackbrake $*',
+  ].filter((command) => !refused(command));
+
+  assert.deepEqual(allowed, []);
+});
+
+test('V1 controls: reading with blackbrake and naming it stay allowed', () => {
+  for (const command of [
+    'blackbrake status',
+    'blackbrake --json status',
+    'blackbrake --path status log',
+    'bash -c "blackbrake audit --json"',
+    'npm install -g blackbrake@0.3.0',
+    'grep -rn blackbrake src',
+    'git log --oneline | grep blackbrake',
+    'blackbrake help',
+  ]) assert.equal(refused(command), false, command);
 });
 
 // ---------- V3: while paused, every refusal stands except the secret and spend checks ----------
