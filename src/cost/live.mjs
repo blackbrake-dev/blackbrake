@@ -144,6 +144,7 @@ export function tailTranscript(file, { roots = [], state = {}, maxBytes = 1024 *
   const fd = fs.openSync(trustedFile(file, roots), OPEN);
   let stat;
   let bytes;
+  let bytesRead;
   let offset;
 
   try {
@@ -162,7 +163,8 @@ export function tailTranscript(file, { roots = [], state = {}, maxBytes = 1024 *
     offset = start ?? (reset ? 0 : state.offset ?? 0);
     state = start > 0 ? { skip: true } : reset ? {} : state;
     bytes = Buffer.alloc(Math.min(maxBytes, Math.max(0, stat.size - offset)));
-    fs.readSync(fd, bytes, 0, bytes.length, offset);
+    bytesRead = fs.readSync(fd, bytes, 0, bytes.length, offset);
+    bytes = bytes.subarray(0, bytesRead);
   } finally { fs.closeSync(fd); }
 
   const identity = identityOf(stat);
@@ -174,7 +176,7 @@ export function tailTranscript(file, { roots = [], state = {}, maxBytes = 1024 *
   if (state.skip) {
     const end = bytes.indexOf(0x0a);
 
-    if (end < 0) return { records: [], state: { offset: offset + bytes.length, ...metadata, skip: true } };
+    if (end < 0) return { records: [], bytesRead, state: { offset: offset + bytes.length, ...metadata, skip: true } };
     from = end + 1;
   }
 
@@ -183,7 +185,7 @@ export function tailTranscript(file, { roots = [], state = {}, maxBytes = 1024 *
   if (newline < from) {
     const skip = from === 0 && bytes.length > 0 && bytes.length === maxBytes;
 
-    return { records: [], state: { offset: offset + (skip ? bytes.length : from), ...metadata, skip } };
+    return { records: [], bytesRead, state: { offset: offset + (skip ? bytes.length : from), ...metadata, skip } };
   }
 
   const records = [];
@@ -194,7 +196,7 @@ export function tailTranscript(file, { roots = [], state = {}, maxBytes = 1024 *
     try { records.push(JSON.parse(line)); } catch { /* malformed transcript lines are ignored */ }
   }
 
-  return { records, state: { offset: offset + newline + 1, ...metadata } };
+  return { records, bytesRead, state: { offset: offset + newline + 1, ...metadata } };
 }
 
 export async function summarizeHistory({ root = defaultRoot(), harness = 'claude' } = {}) {

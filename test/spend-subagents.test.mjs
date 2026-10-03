@@ -149,6 +149,37 @@ test('existing child spend is silent and a rewritten child response is not count
   assert.equal(rotated.responses, counted.responses);
 });
 
+test('owned child accounting is independent of foreign and historical enumeration order', () => {
+  const f = fixture('order');
+  const started = Date.now() - 1000;
+  const at = new Date(started).toISOString();
+
+  const files = [
+    ['agent-aaaaaaaaaaaaaaaa.jsonl', child('owned', SESSION, at)],
+    ['agent-bbbbbbbbbbbbbbbb.jsonl', child('foreign', FOREIGN, at, 900_000)],
+    ['agent-cccccccccccccccc.jsonl', child('past', SESSION, new Date(started - 1000).toISOString(), 900_000)],
+  ];
+
+  for (const [name, rows] of files) fs.writeFileSync(path.join(f.children, name), jsonl(rows));
+  const listed = listClaudeSubagentFiles(f.transcript, SESSION, { roots: [f.root] });
+  const byName = new Map(listed.map((entry) => [path.basename(entry.file), entry]));
+  const expected = usageCost(files[0][1][1].message.usage, 'claude-sonnet-5');
+
+  for (const order of [[0, 1, 2], [0, 2, 1], [1, 0, 2], [1, 2, 0], [2, 0, 1], [2, 1, 0]]) {
+    const spend = {
+      open: { start: started, cost: 0, responses: 0, tokens: 0, costAlerted: false },
+      responses: [],
+      subagents: { initialized: true, files: {} },
+    };
+
+    const live = { ...liveCost, listClaudeSubagentFiles: () => order.map((index) => byName.get(files[index][0])) };
+
+    accountClaudeSubagents({ live, transcript: f.transcript, root: f.root, sessionId: SESSION, spend, secret: 'fixture-secret' });
+    assert.equal(spend.open.responses, 1, `enumeration ${order}`);
+    assert.equal(spend.open.cost, expected, `enumeration ${order}`);
+  }
+});
+
 test('a child that continues after the next parent prompt is not reassigned to the new episode', () => {
   const f = fixture('boundary');
   const run = hook(f);
@@ -396,4 +427,41 @@ test('unchanged metadata does not skip the unread remainder of a bounded child t
   assert.equal(opens, 2);
   account();
   assert.equal(opens, 2, 'a fully consumed unchanged child was reopened');
+});
+
+test('subagent read budget counts incomplete lines even when their cursor stays at zero', () => {
+  const f = fixture('incomplete-budget');
+
+  for (let i = 0; i < 8; i++) {
+    fs.writeFileSync(path.join(f.children, `agent-${i.toString(16).padStart(16, 'a')}.jsonl`), 'x'.repeat(256 * 1024 - 1));
+  }
+
+  let bytesRead = 0;
+
+  const live = {
+    ...liveCost,
+    tailTranscript(...args) {
+      const read = fs.readSync;
+
+      fs.readSync = (...readArgs) => {
+        const count = read(...readArgs);
+
+        bytesRead += count;
+
+        return count;
+      };
+
+      try { return liveCost.tailTranscript(...args); } finally { fs.readSync = read; }
+    },
+  };
+
+  const spend = {
+    open: { start: Date.now() - 1000, cost: 0, responses: 0, tokens: 0, costAlerted: false },
+    responses: [],
+    subagents: { initialized: true, files: {} },
+  };
+
+  accountClaudeSubagents({ live, transcript: f.transcript, root: f.root, sessionId: SESSION, spend, secret: 'fixture-secret' });
+  assert.ok(bytesRead <= 1024 * 1024, `read ${bytesRead} bytes in one event`);
+  assert.ok(bytesRead > 256 * 1024, 'the fixture should read several incomplete children');
 });

@@ -200,10 +200,12 @@ export function accountClaudeSubagents({ live, transcript, root, sessionId, spen
       continue;
     }
 
-    const reset = Boolean(state.tail.identity) && tailed.state.identity !== state.tail.identity;
-    const consumed = seed ? Math.min(maxBytes, child.size) : reset ? tailed.state.offset : Math.max(0, tailed.state.offset - state.tail.offset);
+    // A partial line, rewrite or truncation may read bytes without advancing the stored cursor.
+    // Readers without valid byte accounting conservatively consume their full allowance.
+    const consumed = Number.isInteger(tailed.bytesRead) && tailed.bytesRead >= 0 && tailed.bytesRead <= maxBytes
+      ? tailed.bytesRead : maxBytes;
 
-    budget -= Math.min(maxBytes, consumed);
+    budget -= consumed;
     const inspected = inspectChildRecords(tailed.records, sessionId, state);
     Object.assign(state, inspected, { tail: tailed.state });
     changed = true;
