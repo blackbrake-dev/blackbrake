@@ -109,7 +109,7 @@ test('an installed copy ignores a BLACKBRAKE_HOME that points elsewhere', async 
   assert.equal(trustedHome(pathToFileURL(path.join(ROOT, 'src', 'guard', 'hook.mjs')).href, { BLACKBRAKE_HOME: dev }), dev, 'the package itself (development, tests)');
 });
 
-test('state writes replace a planted hard link instead of writing through it', async () => {
+test('scripts refuse a planted hard link before a state write or append', async () => {
   const { writePrivate } = await import('../src/guard/state.mjs');
   const dir = tmp();
   const victim = path.join(dir, 'victim.txt');
@@ -118,11 +118,11 @@ test('state writes replace a planted hard link instead of writing through it', a
 
   try { fs.linkSync(victim, state); } catch { return; }
 
-  writePrivate(state, '{"mode":"protect"}');
+  assert.throws(() => writePrivate(state, '{"mode":"protect"}'), /refused to change/);
   assert.equal(fs.readFileSync(victim, 'utf8'), 'precious');
   writePrivate(path.join(dir, 'log.jsonl'), 'x\n', 'a');
   fs.linkSync(victim, path.join(dir, 'log2.jsonl'));
-  writePrivate(path.join(dir, 'log2.jsonl'), 'y\n', 'a');
+  assert.throws(() => writePrivate(path.join(dir, 'log2.jsonl'), 'y\n', 'a'), /refused to change/);
   assert.equal(fs.readFileSync(victim, 'utf8'), 'precious', 'appends too');
 });
 
