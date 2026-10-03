@@ -9,7 +9,7 @@ import { isObject, isText } from './kinds.mjs';
 // oxlint-disable-next-line no-control-regex -- matching control characters is the point
 // Also the invisible joiners and selectors review B found still showing (CGJ U+034F, Khmer U+17B4-5,
 // Mongolian U+180B-F, U+2065, variation selectors, interlinear annotation U+FFF9-B).
-const UNSAFE = /[\u0000-\u0008\u000b-\u001f\u007f-\u009f\u00ad\u034f\u061c\u115f\u1160\u17b4\u17b5\u180b-\u180f\u200b-\u200f\u2028-\u202e\u2060-\u2069\u3164\ufe00-\ufe0f\ufeff\uffa0\ufff0-\ufffb]|[\u{E0000}-\u{E007F}\u{E0100}-\u{E01EF}]/gu;
+const UNSAFE = /[\u0000-\u0008\u000b-\u001f\u007f-\u009f\u00ad\u034f\u061c\u115f\u1160\u17b4\u17b5\u180b-\u180f\u200b-\u200f\u2028-\u202e\u2060-\u206f\u2800\u3164\ufe00-\ufe0f\ufeff\uffa0\ufff0-\ufffc]|[\u{13430}-\u{13438}\u{1BCA0}-\u{1BCA3}\u{1D173}-\u{1D17A}\u{E0000}-\u{E007F}\u{E0100}-\u{E01EF}]/gu;
 
 // Every string inside a plain object or array, cleaned (for data about to be shown or exported).
 export function cleanDeep(value, max = 500) {

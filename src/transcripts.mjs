@@ -32,7 +32,7 @@ export function listTranscripts(root) {
 
 // Messages that arrive with role "user" but were written by the harness, not the person.
 // Counting them as the user's words was a measured error in this project's own research.
-const HARNESS_TEXT = /^(Another Claude session sent a message|\[Subagent hand-back\]|Base directory for this skill:|Caveat:|<)/;
+const HARNESS_TEXT = /^(Another Claude session sent a message|\[Subagent hand-back\]|Base directory for this skill:|Caveat:|<(?:system-reminder|task-notification|local-command-caveat|local-command-stdout|command-name|command-message|command-args|ide_opened_file|ide_selection|teammate-message|environment_context|subagent_notification)(?:\s|>))/;
 
 export const isHarnessText = (text) => HARNESS_TEXT.test(text.trimStart());
 

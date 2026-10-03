@@ -6,6 +6,7 @@
 //
 // Pure: no file I/O (the rules file is read once by loadRules, and only when the caller gives none).
 import os from 'node:os';
+import { builtinModules } from 'node:module';
 import { loadRules, scanText } from '../secrets/engine.mjs';
 import { isSafeReportChar } from '../text.mjs';
 import { isText } from '../kinds.mjs';
@@ -63,11 +64,13 @@ function defaultIdentity() {
   return { home: get(() => os.homedir()), user: get(() => os.userInfo().username) || process.env.USERNAME || process.env.USER || '', host: get(() => os.hostname()) };
 }
 
+const identityFold = (value) => String(value ?? '').normalize('NFD').replace(/\p{M}/gu, '').toLowerCase();
+
 function prepareIdentity(identity) {
   const id = identity ?? defaultIdentity();
 
   const pick = (v) => {
-    const s = String(v ?? '').toLowerCase().replaceAll('\\', '/');
+    const s = identityFold(v).replaceAll('\\', '/');
 
     return s.length >= 3 ? s : null;
   };
@@ -131,7 +134,12 @@ function checkAlphabet(line, n, p) {
 // already outside the alphabet; this is the rest.
 // Any URI scheme stuck to its value (tel:, sms:, ms-msdt:, search-ms: … not just a fixed list; review
 // B). "Note: text" (a space after the colon) is prose, and so are the generated "Version: x" lines.
-const LINK = /:\/\/|www\.|(?<![a-z0-9+.-])[a-z][a-z0-9+.-]{1,30}:(?=[^\s:])/i;
+const LINK = /:\/\/|www\.|(?<![a-z0-9+.-])[a-z][a-z0-9+.-]{0,30}:(?=[^\s:])/i;
+
+const NODE_MODULES = new Set(builtinModules.map((name) => name.replace(/^node:/, '')));
+
+// Bare domains are links too; source-file extensions remain ordinary filenames.
+const DOMAIN = /\b(?:[a-z0-9](?:[a-z0-9-]*[a-z0-9])?\.)+(?!(?:md|sh|mjs|js|json|ts|txt|yaml|yml|css|html)\b)[a-z]{2,63}\b/i;
 
 // V7 (shape part). A path, a long hexadecimal or base64-looking run, or an address identifies
 // something the person did not mean to share.
@@ -141,11 +149,17 @@ const PATH_LEAD = /(?:^|[\s"'(=,;:])(?:~|(?:\.{1,2})?\/\S)/;
 
 const PATH_SLASHES = /\S*\/\S*\//;
 
-const HEX = /(?<![0-9a-z])(?:0x)?[0-9a-f]{12,}(?![0-9a-z])/i;
+const HEX = /(?<![0-9a-z])(?:0x)?[0-9a-f]{11,}(?![0-9a-z])/i;
 
 const UUID = /[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/i;
 
 const IPV4 = /(?<![0-9.])(?:\d{1,3}\.){3}\d{1,3}(?![0-9])/;
+
+// Two-component addresses with a first component >= 10 avoid treating ordinary decimal numbers
+// such as 3.5 as an address. Ambiguous shorter decimal shapes remain a documented text limit.
+const IPV4_SHORT = /(?<![0-9.])(?:[1-9]\d|1\d{2}|2[0-4]\d|25[0-5])\.\d{1,8}(?![0-9.])/;
+
+const IPV4_INTEGER = /(?<![0-9])\d{10}(?![0-9])/g;
 
 const IPV6_FULL = /(?<![0-9a-z:])(?:[0-9a-f]{1,4}:){7}[0-9a-f]{1,4}(?![0-9a-z:])/i;
 
@@ -157,19 +171,31 @@ const LONG_RUN = /[A-Za-z0-9+/_.-]{24,}/g;
 // Plain hyphenated words ("well-known-pre-existing-condition") are prose, not tokens. The same shape
 // covers rule ids such as 1password-service-account-token. The first part must be word-sized
 // (review B: "<30 random characters>-aa-bb" passed as a kebab word).
-const KEBAB = /^[a-z0-9]{1,15}(?:-[a-z]+){2,}$/;
+const KEBAB = /^(?:[a-z]{1,15}|1password)(?:-[a-z]{1,15}){2,}$/;
+
+function identityMention(text, name) {
+  if (!name) return false;
+  let at = text.indexOf(name);
+
+  while (at !== -1) {
+    if (name.length >= 6 || (!ALNUM.test(text[at - 1] ?? '') && !ALNUM.test(text[at + name.length] ?? ''))) return true;
+    at = text.indexOf(name, at + 1);
+  }
+
+  return false;
+}
 
 function checkPrivacy(line, n, ident, p) {
-  const lower = line.toLowerCase();
+  const lower = identityFold(line);
   const slashed = lower.replaceAll('\\', '/');
 
-  if (PATH_DRIVE.test(line) || PATH_LEAD.test(line) || PATH_SLASHES.test(line)) p.add('V7', 'privacy-path', n);
+  if (PATH_DRIVE.test(line) || PATH_LEAD.test(line) || PATH_SLASHES.test(line.replace(/\bread\/write\/execute\b/g, 'permissions'))) p.add('V7', 'privacy-path', n);
 
-  if ((ident.home && slashed.includes(ident.home)) || (ident.user && lower.includes(ident.user)) || ident.hosts.some((h) => lower.includes(h))) p.add('V7', 'privacy-identity', n);
+  if ((ident.home && slashed.includes(ident.home)) || identityMention(lower, ident.user) || ident.hosts.some((h) => identityMention(lower, h))) p.add('V7', 'privacy-identity', n);
 
   if (HEX.test(line) || UUID.test(line)) p.add('V7', 'privacy-hex', n);
 
-  if (IPV4.test(line) || IPV6_FULL.test(line) || [...line.matchAll(IPV6_SHORT)].some((m) => /[0-9a-f]/i.test(m[0]))) p.add('V7', 'privacy-ip', n);
+  if (IPV4.test(line) || IPV4_SHORT.test(line) || [...line.matchAll(IPV4_INTEGER)].some((m) => Number(m[0]) <= 0xffffffff) || IPV6_FULL.test(line) || [...line.matchAll(IPV6_SHORT)].some((m) => /[0-9a-f]/i.test(m[0]))) p.add('V7', 'privacy-ip', n);
 
   if ((line.match(LONG_RUN) ?? []).some((run) => !KEBAB.test(run))) p.add('V7', 'privacy-token', n);
 }
@@ -181,7 +207,10 @@ function checkLine(line, n, ident, p) {
   if (line.normalize('NFC') !== line) p.add('V3', 'nfc', n);
   checkAlphabet(line, n, p);
 
-  if (LINK.test(line)) p.add('V6', 'link', n);
+  const linkText = line.replace(/\bnode:([a-z][a-z0-9_/]*)\b/g, (match, name) => NODE_MODULES.has(name) ? 'local technical name' : match)
+    .replace(/\blocalhost:\d{1,5}\b|\b[A-Za-z]:[\\/]\S*/g, 'local technical name');
+
+  if (LINK.test(linkText) || DOMAIN.test(line)) p.add('V6', 'link', n);
   checkPrivacy(line, n, ident, p);
 }
 

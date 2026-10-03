@@ -7,6 +7,7 @@
 import path from 'node:path';
 import { t } from '../i18n.mjs';
 import { textOf } from './policy.mjs';
+import { isText } from '../kinds.mjs';
 
 // ---------- canonical output helpers ----------
 
@@ -197,7 +198,12 @@ const cursor = {
     const file = input.file_path ?? input.target_file ?? input.path ?? input.target ?? input.destination;
     const tool_name = /^(Write|Create|Delete|Remove|Move|Rename)/i.test(name) ? 'Write' : /^(Edit|Str_?Replace|Replace|MultiEdit)/i.test(name) ? 'Edit' : /^web_?fetch$/i.test(name) ? 'WebFetch' : name;
 
-    return { event, input: { session_id, tool_name, tool_input: tool_name === 'Write' || tool_name === 'Edit' ? { ...input, file_path: file } : input } };
+    const files = [...new Set([
+      ...(Array.isArray(input.files) ? input.files : []),
+      ...['file_path', 'target_file', 'path', 'source', 'source_path', 'from', 'destination', 'target', 'new_path', 'to', 'target_path', 'destination_path'].flatMap((key) => isText(input[key]) ? [input[key]] : []),
+    ])];
+
+    return { event, input: { session_id, tool_name, tool_input: tool_name === 'Write' || tool_name === 'Edit' ? { ...input, file_path: file, files } : input } };
   },
   render(event, out, { native, input = {} }) {
     if (native === 'beforeSubmitPrompt') return blocked(out) ? json({ continue: false, user_message: out.reason }) : json({ continue: true });
