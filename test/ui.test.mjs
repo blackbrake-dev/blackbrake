@@ -18,7 +18,9 @@ const ESC = '\x1b[';
 const data = {
   version: '0.0.0-test', root: '/home/u/.claude/projects', files: 3, bytes: 2048, ms: 1200, rules: { count: 221 }, pricesDate: '2026-09-23',
   secrets: [
+    // oxlint-disable-next-line anti-slop/no-shape-in-symbol-names -- fixture of the public finding schema, which names this field "shape".
     { ruleId: 'linear-api-key', shape: 'lin_…(48)', copies: 5, sessions: 1, subagentCopies: 0, origin: 'pasted by you', firstSeen: '2026-09-18T10:00:00Z', where: { user: 1, assistant: 1 }, classification: CLASSES.real },
+    // oxlint-disable-next-line anti-slop/no-shape-in-symbol-names -- fixture of the public finding schema, which names this field "shape".
     { ruleId: 'generic-api-key', shape: 'test…(20)', copies: 1, sessions: 1, subagentCopies: 0, origin: 'printed by a command', firstSeen: null, where: {}, classification: CLASSES.example },
   ],
   load: { counts: { skills: 10, agents: 2, commands: 3, pluginsEnabled: 1, duplicates: 0 }, mcp: [], perTurnTokens: { skills: 1200, agents: 300 }, usedSkills: 4, posture: { dangerousModePromptSkipped: true, defaultModeBypass: false }, risks: [{ label: 'sends environment or secrets over the network', owner: 'skill:x', inCode: true }] },
@@ -95,6 +97,7 @@ test('home and privacy screens', () => {
   const head = homeHeader(p, '1.2.3', 96).join('\n');
   assert.match(head, /█▀▀▀▄ █ {5}▄▀▀▀▄/, 'the big name (shapes only without colour)');
   const lit = homeHeader(createPainter(3), '1.2.3', 96).join('\n');
+  // oxlint-disable-next-line no-control-regex -- the test checks ANSI colour codes
   assert.match(lit, /\x1b\[38;2;255;179;71m/, 'BRAKE lit from above in amber');
   assert.match(lit, /48;2;90;42;20m|38;2;90;42;20m/, 'drop shadow in the brand brown');
   assert.match(head, /v1\.2\.3/);

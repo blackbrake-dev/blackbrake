@@ -14,10 +14,12 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { assertNoLinks } from '../guard/install.mjs';
 import { skippedAsOwnCredential } from '../guard/scan.mjs';
+import { mayChange } from '../guard/safety.mjs';
 import { guardHome } from '../guard/state.mjs';
 import { scanText } from '../secrets/engine.mjs';
 import { mask } from '../secrets/audit.mjs';
 import { isLocalPath } from '../text.mjs';
+import { isText } from '../kinds.mjs';
 
 export const KEEP_DAYS = 7;
 
@@ -49,13 +51,18 @@ const sameFile = (a, b) => a.size === b.size && a.mtimeMs === b.mtimeMs && a.ino
 
 // files: absolute paths. keys: Set of 12-character hashes (the audit's and the scan's keys).
 export function scrub({ files, keys, rules, home = guardHome(), now = Date.now } = {}) {
+  // Rewrites transcripts and keeps a backup in guard's folder: both only by the program (safety.mjs).
+  mayChange(path.resolve(backupsDir(home)));
+
+  for (const f of files ?? []) mayChange(path.resolve(f));
+
   if (SYNCED.test(path.resolve(home))) throw new Error(`blackbrake's folder (${home}) is inside a folder that syncs to the cloud; the backups would hold the secrets. Nothing was changed.`);
   const id = `scrub-${new Date(now()).toISOString().replace(/[:.]/g, '-')}-${crypto.randomBytes(3).toString('hex')}`;
   const dir = path.join(backupsDir(home), id);
   const result = { id, changed: [], replaced: 0, busy: [], failed: [] };
   const index = [];
 
-  for (const file of [...new Set(files)]) {
+  for (const file of new Set(files)) {
     if (skippedAsOwnCredential(file)) continue;
     let read = null;
 
@@ -147,14 +154,14 @@ export function listScrubs(home = guardHome()) {
 // Puts the original files of one clean-up back (the secrets return to them).
 export function undoScrub(id, home = guardHome()) {
   if (!/^scrub-[\w-]+$/.test(id)) throw new Error('Unknown clean-up.');
-  const dir = path.join(backupsDir(home), id);
+  const dir = mayChange(path.resolve(backupsDir(home), id));
   const index = JSON.parse(fs.readFileSync(path.join(dir, 'index.json'), 'utf8'));
   const result = { restored: 0, changed: [] };
 
   // A file is put back only if it is still exactly what the clean-up wrote: otherwise it changed
   // since (new transcript lines) or the index was edited, and restoring would overwrite that.
   for (const { file, copy, after } of index.files) {
-    if (!/^\d{5}\.bak$/.test(copy) || typeof file !== 'string' || !path.isAbsolute(file) || !isLocalPath(file) || !/^[0-9a-f]{64}$/.test(after ?? '')) continue;
+    if (!/^\d{5}\.bak$/.test(copy) || !isText(file) || !path.isAbsolute(file) || !isLocalPath(file) || !/^[0-9a-f]{64}$/.test(after ?? '')) continue;
     const tmp = `${file}.${crypto.randomBytes(6).toString('hex')}.tmp`;
 
     try {
@@ -190,6 +197,7 @@ export function undoScrub(id, home = guardHome()) {
 // Deletes clean-up backups older than KEEP_DAYS (they hold the secrets that were removed).
 // A folder whose index cannot be read goes by its own modification time.
 export function pruneScrubs(home = guardHome(), now = Date.now) {
+  mayChange(path.resolve(backupsDir(home)));
   let removed = 0;
   let names = [];
 

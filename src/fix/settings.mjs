@@ -7,8 +7,10 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { assertNoLinks } from '../guard/install.mjs';
+import { mayChange } from '../guard/safety.mjs';
 import { guardHome } from '../guard/state.mjs';
 import { SYNCED } from './scrub.mjs';
+import { isCount, isRecord } from '../kinds.mjs';
 
 export const claudeSettingsFile = (env = process.env) => path.join(env.CLAUDE_CONFIG_DIR && path.isAbsolute(env.CLAUDE_CONFIG_DIR) ? env.CLAUDE_CONFIG_DIR : path.join(os.homedir(), '.claude'), 'settings.json');
 
@@ -24,7 +26,7 @@ export const SETTINGS_FIXES = {
 
     return add.length ? { ...s, permissions: { ...s.permissions, deny: [...deny, ...add] } } : null;
   },
-  'cleanup-days': (s) => (typeof s.cleanupPeriodDays === 'number' && s.cleanupPeriodDays > 0 && s.cleanupPeriodDays <= 14 ? null : { ...s, cleanupPeriodDays: 14 }),
+  'cleanup-days': (s) => (isCount(s.cleanupPeriodDays) && s.cleanupPeriodDays > 0 && s.cleanupPeriodDays <= 14 ? null : { ...s, cleanupPeriodDays: 14 }),
   'config:enableAllProjectMcpServers': (s) => (s.enableAllProjectMcpServers === true ? { ...s, enableAllProjectMcpServers: false } : null),
 };
 
@@ -38,7 +40,7 @@ function readSettings(file) {
   if (!st.isFile()) throw new Error(`${file} is not a regular file; blackbrake does not change it.`);
   const value = JSON.parse(fs.readFileSync(file, 'utf8'));
 
-  if (!value || typeof value !== 'object' || Array.isArray(value)) throw new Error(`${file} is not a JSON object; blackbrake does not change it.`);
+  if (!isRecord(value)) throw new Error(`${file} is not a JSON object; blackbrake does not change it.`);
 
   return { value, exists: true };
 }
@@ -55,6 +57,10 @@ export function planSettings(ids, file = claudeSettingsFile()) {
 
 export function applySettings(plan, { home = guardHome() } = {}) {
   const { file, value } = plan;
+
+  // The real ~/.claude/settings.json and guard's backups: only by the program (safety.mjs).
+  mayChange(path.resolve(file));
+  mayChange(path.resolve(home));
   assertNoLinks(path.dirname(file));
 
   // Claude Code writes this file too: if it changed since the change was shown, nothing is applied.

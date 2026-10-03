@@ -3,7 +3,8 @@
 //   - notices which harnesses are running (the operating system's process list),
 //   - follows their history and session files as they grow and warns about real secrets in them,
 //   - opens the alerts window when a harness starts, if no window is open,
-//   - notifies high and maximum alerts from any agent when no alerts window is open to do it.
+//   - notifies high and maximum alerts from any agent when no alerts window is open to do it,
+//   - warns once when a Codex or Devin episode goes above the user's own p90 of tokens per episode.
 // Local only; it writes nothing but guard's own log and pid file.
 import { spawnSync } from 'node:child_process';
 import crypto from 'node:crypto';
@@ -16,6 +17,7 @@ import { findSecrets } from './policy.mjs';
 import { detectedHarnesses, harnessDirs, HARNESSES } from './registry.mjs';
 import { SKIP_DIRS, skippedAsOwnCredential } from './scan.mjs';
 import { pruneScrubs } from '../fix/scrub.mjs';
+import { isPaused } from './pause.mjs';
 import { appendLog, getSetting, guardHome, writePrivate } from './state.mjs';
 import { createAlertSink, createTail, isWatchRunning, notify } from './watch.mjs';
 import { maybeOpenWindow, systemProgram } from './window.mjs';
@@ -156,6 +158,8 @@ export function createFollower(harnesses = watchedHarnesses(), { maxFiles = 2000
 // ---------- the loop ----------
 
 export async function runBackground({ home = guardHome(), intervalMs = 8000, cli, once = false, notifier = notify } = {}) {
+  // Paused ("blackbrake pause"): the watcher does not start, and stops when it sees the mark.
+  if (isPaused(home)) return 'paused';
   const pidFile = path.join(home, 'watch-bg.pid');
   fs.mkdirSync(home, { recursive: true, mode: 0o700 });
   writePrivate(pidFile, String(process.pid));
@@ -167,6 +171,13 @@ export async function runBackground({ home = guardHome(), intervalMs = 8000, cli
   let running = new Set();
   const beats = new Map();
   const reported = new Map();
+  // Loaded here, never on the hook's path; without it the rest of the watcher still runs.
+  let codex = null;
+  let devin = null;
+
+  try { codex = (await import('../cost/codex.mjs')).createCodexSpend({ home, notifier }); } catch { /* Codex spend is optional */ }
+
+  try { devin = (await import('../cost/devin.mjs')).createDevinSpend({ home, notifier }); } catch { /* Devin spend is optional */ }
 
   const tick = () => {
     try { fs.utimesSync(pidFile, new Date(), new Date()); } catch { /* hint only */ }
@@ -208,6 +219,10 @@ export async function runBackground({ home = guardHome(), intervalMs = 8000, cli
 
     for (const [k, at] of reported) if (Date.now() - at > 864e5) reported.delete(k);
 
+    try { codex?.tick(); } catch { /* a Codex spend failure never stops the watcher */ }
+
+    try { devin?.tick(); } catch { /* a Devin spend failure never stops the watcher */ }
+
     // The open alerts window notifies on its own; otherwise this does.
     const fresh = tail.read();
 
@@ -220,16 +235,22 @@ export async function runBackground({ home = guardHome(), intervalMs = 8000, cli
 
   await new Promise((resolve) => {
     const timer = setInterval(() => {
+      if (isPaused(home)) {
+        stop();
+
+        return;
+      }
+
       try { tick(); } catch { /* keep watching */ }
     }, intervalMs);
 
-    const stop = () => {
+    function stop() {
       clearInterval(timer);
 
       try { if (fs.readFileSync(pidFile, 'utf8') === String(process.pid)) fs.rmSync(pidFile); } catch { /* gone */ }
 
       resolve();
-    };
+    }
 
     process.once('SIGINT', stop);
     process.once('SIGTERM', stop);

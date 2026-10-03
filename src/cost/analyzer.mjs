@@ -8,7 +8,7 @@
 // snapshots), all with the same message id and usage. Each response is counted once, using its
 // largest snapshot; counting lines inflated spend about 2x on the author's data.
 import { isHarnessText } from '../transcripts.mjs';
-import { priceFor, usageCost, usageSize } from './prices.mjs';
+import { priceFor, usageCost, usageSize, validUsage } from './prices.mjs';
 
 const toolUses = (msg) => (Array.isArray(msg.content) ? msg.content : []).filter((b) => b?.type === 'tool_use');
 
@@ -17,16 +17,59 @@ const userPromptText = (msg) => {
   const blocks = Array.isArray(msg.content) ? msg.content : [{ type: 'text', text: msg.content }];
 
   if (blocks.some((b) => b?.type === 'tool_result')) return null;
+  // oxlint-disable-next-line anti-slop/no-runtime-typeof -- Transcript JSON is validated here at its message boundary.
   const text = blocks.filter((b) => b?.type === 'text' && typeof b.text === 'string').map((b) => b.text).join('\n').trim();
 
   return text && !isHarnessText(text) ? text : null;
 };
 
+export const isUserPromptMessage = (msg) => userPromptText(msg) !== null;
+
+// Invalid usage (F6.12 D2) is discarded: not a response, no cost, no size. Cost only moves up: a
+// later snapshot (genuine or forged) never lowers what a response was already charged.
+const amount = (value) => (Number.isFinite(value) && value >= 0 ? value : null);
+
+export function createUsageLedger({ keyOf = (record, msg) => msg.id ?? record.requestId ?? null, entries = [] } = {}) {
+  const responses = new Map((Array.isArray(entries) ? entries : [])
+    .filter((entry) => entry && Number.isInteger(entry.size) && entry.size >= 0 && entry.size <= 4e9 && amount(entry.cost) !== null)
+    .map((entry) => [entry.key, { size: entry.size, cost: entry.cost }]));
+
+  return {
+    account(record, msg) {
+      if (!validUsage(msg.usage)) return { first: false, skipped: true, delta: 0, size: 0, sizeDelta: 0 };
+      const key = keyOf(record, msg);
+      const size = usageSize(msg.usage);
+      const cost = usageCost(msg.usage, msg.model);
+      const prev = key ? responses.get(key) : null;
+
+      if (!prev) {
+        if (key) responses.set(key, { size, cost });
+
+        return { first: true, delta: cost, size, sizeDelta: size };
+      }
+
+      if (size > prev.size) {
+        const delta = Math.max(0, cost - prev.cost);
+        const sizeDelta = size - prev.size;
+        Object.assign(prev, { size, cost: prev.cost + delta });
+
+        return { first: false, delta, size, sizeDelta };
+      }
+
+      return { first: false, delta: 0, size: prev.size, sizeDelta: 0 };
+    },
+    snapshot() {
+      return [...responses].map(([key, value]) => ({ key, ...value }));
+    },
+  };
+}
+
 export function createCostAnalyzer() {
   const sessions = new Map(); // session -> { project, episodes: [], turns, minInput, crSum, cost }
   const subagentRuns = [];    // { session, startTs, cost, turns, tools }
   const unknownModels = new Set();
-  const responses = new Map(); // response key -> { size, cost, targets }
+  const usageLedger = createUsageLedger();
+  const responseTargets = new Map(); // response key -> accumulators charged for this response
   const toolIds = new Set();
   let file = null;
   let current = null;         // current file accumulator
@@ -45,20 +88,18 @@ export function createCostAnalyzer() {
   // corrects the cost already added to its accumulators.
   const account = (record, msg, cost, targets) => {
     const key = msg.id ?? record.requestId ?? null;
-    const size = usageSize(msg.usage);
-    const prev = key ? responses.get(key) : null;
+    const result = usageLedger.account(record, msg);
 
-    if (!prev) {
-      if (key) responses.set(key, { size, cost, targets });
+    if (result.first) {
+      if (key) responseTargets.set(key, targets);
 
       for (const t of targets) t.cost += cost;
 
       return true;
     }
 
-    if (size > prev.size) {
-      for (const t of prev.targets) t.cost += cost - prev.cost;
-      Object.assign(prev, { size, cost });
+    if (result.delta) {
+      for (const t of responseTargets.get(key) ?? []) t.cost += result.delta;
     }
 
     return false;
@@ -77,6 +118,8 @@ export function createCostAnalyzer() {
       const msg = record.message;
 
       if (!msg) return;
+
+      if (msg.role === 'assistant' && msg.usage && !validUsage(msg.usage)) return;
       const ts = record.timestamp ? Date.parse(record.timestamp) : null;
 
       if (current) {
@@ -145,6 +188,7 @@ export function createCostAnalyzer() {
       return {
         total,
         episodes: episodes.length,
+        episodeCosts: episodes.map((e) => ({ cost: e.cost, responses: e.turns })),
         p50: q(0.5),
         p90: q(0.9),
         topShare,

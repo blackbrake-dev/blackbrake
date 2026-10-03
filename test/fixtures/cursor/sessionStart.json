@@ -1,0 +1,13 @@
+{
+  "_source": "Shape captured from a real cursor-agent 2026.09.26-dd393fe session on Windows (2026-10-01); every value replaced with a synthetic one. Cursor sends it with a UTF-8 byte order mark first.",
+  "conversation_id": "00000000-0000-4000-8000-000000000001",
+  "generation_id": "00000000-0000-4000-8000-000000000001",
+  "model": "example-model",
+  "is_background_agent": false,
+  "session_id": "00000000-0000-4000-8000-000000000001",
+  "hook_event_name": "sessionStart",
+  "cursor_version": "2026.09.26-dd393fe",
+  "workspace_roots": ["/work/example"],
+  "user_email": "someone@example.invalid",
+  "transcript_path": null
+}

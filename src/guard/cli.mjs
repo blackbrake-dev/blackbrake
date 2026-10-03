@@ -12,9 +12,12 @@ import { select } from '../ui/menu.mjs';
 import { columns, padEnd, screen } from '../ui/term.mjs';
 import { AGENTS } from './agents.mjs';
 import { claudeCommand, guardInstalled, PLUGIN_ID } from './install.mjs';
+import { requireHuman } from './human.mjs';
+import { isPaused } from './pause.mjs';
+import { getSpendBaseline } from './spend-state.mjs';
 import { getMode, guardHome, readLog, sessionHash } from './state.mjs';
 
-const KIND = {
+export const KIND = {
   'secret-in-prompt': 'secret in your message',
   'secret-in-output': 'secret in tool output',
   'secret-in-write': 'secret written to a file',
@@ -27,11 +30,16 @@ const KIND = {
   tamper: 'attempt to switch guard off',
   error: 'guard could not check a step',
   'secret-in-history': 'secret written in an agent\'s history',
+  'spend-cost': 'episode above your local cost p90',
+  'spend-loop': 'repeated tool call',
+  'spend-tokens': 'episode above your local token p90',
+  'inventory-delta': 'new or changed agent add-ons',
 };
 
 const interesting = (e) => e.kind in KIND;
 
-export const isInteractive = () => Boolean(process.stdin.isTTY && process.stdout.isTTY);
+// `io` (tests): { input, output } instead of the process's own streams.
+export const isInteractive = ({ input = process.stdin, output = process.stdout } = {}) => Boolean(input?.isTTY && output?.isTTY);
 
 // Ask a yes/no question in the terminal; "No" is preselected. Without a terminal: no.
 export async function confirm(p, question) {
@@ -41,10 +49,21 @@ export async function confirm(p, question) {
   return (await select(p, [{ value: false, label: t('No') }, { value: true, label: t('Yes') }])) === true;
 }
 
-// For lowering protection: the person has to type a word, not just press Enter.
-export async function confirmTyped(p, question, word, alias = null) {
-  if (!isInteractive()) return false;
-  const rl = readline.createInterface({ input: process.stdin, output: process.stdout });
+// For lowering protection: the person has to type a word, not just press Enter, and has to be a
+// person (see human.mjs): inside an AI agent it says how to do it properly and changes nothing.
+// `io` (tests): { input, output, env } instead of the process's own streams and environment.
+export async function confirmTyped(p, question, word, alias = null, io = {}) {
+  const input = io.input ?? process.stdin;
+  const output = io.output ?? process.stdout;
+  const human = requireHuman({ env: io.env, input, output });
+
+  if (!human.ok) {
+    if (human.reason === 'agent') output.write(`\n  ${p.amber(human.message)}\n  ${p.faint(human.how)}\n`);
+
+    return false;
+  }
+
+  const rl = readline.createInterface({ input, output });
   const answer = await new Promise((resolve) => rl.question(`\n  ${p.cream(question)}\n  ${p.faint(t('Type "{w}" to confirm, anything else to cancel:', { w: alias ?? word }))} `, resolve));
   rl.close();
 
@@ -90,6 +109,9 @@ function compareApp(app) {
 // The copy the other agents' hooks run (~/.blackbrake/app).
 export const agentsIntegrity = () => compareApp(path.join(guardHome(), 'app')).map((c) => clean(c.replace(/\\/g, '/'), 120));
 
+// The orange PAUSED tag ("blackbrake pause"), shown wherever the mode is.
+export const pausedBadge = (p) => p.onBrown(p.amber(p.bold(` ${t('PAUSED')} `)));
+
 export function modeBadge(p, mode) {
   return mode === 'protect' ? p.onOrange(p.ink(p.bold(` ${t('PROTECT')} `))) : p.onBrown(p.amber(p.bold(` ${t('OBSERVE')} `)));
 }
@@ -99,7 +121,13 @@ export function statusLines(p, { days = 7 } = {}) {
   const mode = getMode();
   const since = new Date(Date.now() - days * 864e5).toISOString();
   const events = readLog(undefined, { since }).filter(interesting);
-  const out = screen(p, 'GUARD', t('status of guard in your agents'), columns(), { pose: mode === 'protect' ? 'determined' : 'idle', line: t(mode === 'protect' ? 'Protecting: risky steps are stopped.' : 'Observing: I warn and log, nothing is stopped.') });
+  const paused = isPaused();
+
+  const out = screen(p, 'GUARD', t('status of guard in your agents'), columns(), paused
+    ? { pose: 'sleep', line: t('PAUSED — nothing is protecting your agents') }
+    : { pose: mode === 'protect' ? 'determined' : 'idle', line: t(mode === 'protect' ? 'Protecting: risky steps are stopped.' : 'Observing: I warn and log, nothing is stopped.') });
+
+  if (paused) out.push(`  ${pausedBadge(p)} ${p.amber(t('You are not protected until you run "blackbrake resume".'))}`, '');
   // Hooks that ran in the last day while no installed plugin is registered: loaded another way
   // (claude --plugin-dir, a copied hooks config). It runs, but its code cannot be checked here.
   const dayAgo = new Date(Date.now() - 864e5).toISOString();
@@ -111,6 +139,10 @@ export function statusLines(p, { days = 7 } = {}) {
 
   out.push(`  ${padEnd(p.faint(t('Plugin')), 14)}${plugin}`);
   out.push(`  ${padEnd(p.faint(t('Mode')), 14)}${modeBadge(p, mode)} ${p.faint(t(mode === 'protect' ? 'stops secrets before they are sent' : 'warns and logs; nothing is stopped'))}`);
+  const baseline = getSpendBaseline('claude');
+
+  if (baseline?.ready) out.push(`  ${padEnd(p.faint(t('Spend')), 14)}${p.cream(t('{n} local episodes · median API≈${median} · p90 API≈${p90}', { n: baseline.n, median: baseline.p50.toFixed(2), p90: baseline.p90.toFixed(2) }))}`);
+  else out.push(`  ${padEnd(p.faint(t('Spend')), 14)}${p.faint(t('fewer than 30 local Claude Code episodes · no cost threshold'))}`);
 
   if (inst.installed) {
     const check = integrity();
@@ -154,13 +186,14 @@ export function logLines(p, { days = 7 } = {}) {
   if (!events.length) return [...out, `  ${p.faint(t('Nothing yet.'))}`, ''];
 
   // Log lines are data on disk: every field is cleaned before it reaches the terminal.
-  for (const e of events) out.push(`  ${p.faint(clean(e.ts, 20).slice(0, 16).replace('T', ' '))}  ${padEnd(t(KIND[e.kind]), 40)} ${p.cream(padEnd(t(clean(e.action, 12)), 10))} ${p.faint([e.tool, e.rule].filter(Boolean).map((x) => clean(x, 60)).join(' · '))}`);
+  for (const e of events) out.push(`  ${p.faint(clean(e.ts, 20).slice(0, 16).replace('T', ' '))}  ${padEnd(t(KIND[e.kind]), 40)} ${p.cream(padEnd(t(clean(e.action, 12)), 10))} ${p.faint([e.tool, e.rule].flatMap((x) => x ? [clean(x, 60)] : []).join(' · '))}`);
 
   return [...out, ''];
 }
 
 // One line for Claude Code's status bar: reads the session JSON Claude Code sends on stdin.
 export function statusLineText(p, input) {
+  if (isPaused()) return `${p.orange('▀▄')} blackbrake ${pausedBadge(p)}`;
   const mode = getMode();
   const s = sessionHash(input?.session_id);
   const alerts = readLog().filter((e) => e.s === s && interesting(e) && e.kind !== 'error').length;

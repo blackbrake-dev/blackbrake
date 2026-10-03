@@ -8,6 +8,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { mayChange } from './safety.mjs';
 
 export const MODES = ['observe', 'protect'];
 
@@ -49,6 +50,7 @@ const readJson = (f) => { try { return JSON.parse(fs.readFileSync(f, 'utf8')); }
 // for some other file) in place of state.json, a log or a pid file is removed first (only that name;
 // the file it pointed at is untouched). Whole files are written to a fresh temporary name and renamed.
 export function writePrivate(file, text, flag = 'w') {
+  mayChange(path.resolve(file));
   const parent = path.resolve(path.dirname(file));
   const root = path.parse(parent).root;
   let current = root;

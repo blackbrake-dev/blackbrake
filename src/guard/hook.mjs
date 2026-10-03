@@ -8,9 +8,11 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { detectLang, setLang, t } from '../i18n.mjs';
 import { loadRules } from '../secrets/engine.mjs';
-import { ADAPTERS, renderError } from './harnesses.mjs';
+import { ADAPTERS, asShell, renderError } from './harnesses.mjs';
 import { decide, isSensitivePath, linkedPlaces, loginItemFile, protectedTarget, shellViews, withinBudget } from './policy.mjs';
 import { isLocalPath, localFileStat } from '../text.mjs';
+import { isPaused } from './pause.mjs';
+import { declareProgram } from './safety.mjs';
 import { appendLog, getMode, getSavedLang, getSession, setSession, trustedHome } from './state.mjs';
 import { maybeOpenWindow } from './window.mjs';
 
@@ -43,8 +45,9 @@ function readStdin() {
     process.stdin.once('end', () => {
       clearTimeout(timer);
 
+      // Cursor on Windows starts the JSON with a byte order mark (seen in a real session, 2026-10-01).
       if (size > MAX_INPUT) reject(new TooLarge(''));
-      else resolve(Buffer.concat(chunks).toString('utf8'));
+      else resolve(Buffer.concat(chunks).toString('utf8').replace(/^﻿/, ''));
     });
     process.stdin.once('error', (e) => { clearTimeout(timer); reject(e); });
   });
@@ -225,6 +228,8 @@ function expandGlob(pattern, budget) {
 }
 
 async function main() {
+  // This is the blackbrake program: it may change its own folder (src/guard/safety.mjs).
+  declareProgram();
   let native = process.argv[2];
   const harness = Object.hasOwn(ADAPTERS, argValue('--harness')) ? argValue('--harness') : 'claude';
   const adapter = ADAPTERS[harness];
@@ -246,13 +251,40 @@ async function main() {
 
     if (!canonical) throw new TypeError('Unknown hook event');
 
+    // Paused by the user ("blackbrake pause"): a neutral answer in the agent's own format, nothing
+    // analysed, blocked or recorded beyond one "paused" line per session. SessionStart says so.
+    // A tool call is still checked (review A, 2026-10-01; round 2 V3): the pause stops the secret
+    // and spend checks, it does not let an agent rewrite or remove guard.
+    const paused = isPaused(home);
+    const pausedId = raw.session_id ?? raw.conversation_id ?? raw.trajectory_id ?? raw.sessionId ?? null;
+
+    const neutral = () => {
+      try {
+        if (!getSession(pausedId, home).paused) {
+          setSession(pausedId, { paused: new Date().toISOString() }, home);
+          appendLog([{ ev: canonical, kind: 'session', action: 'paused', harness, mode }], pausedId, home);
+        }
+      } catch { /* the answer stays neutral */ }
+
+      const note = canonical === 'SessionStart' ? { systemMessage: t('blackbrake is PAUSED: only attempts to switch it off are checked; secrets and spend are not. Resume it in your terminal with "blackbrake resume".') } : null;
+      emit(adapter.render(canonical, note, { native: nativeEvent, input: {} }));
+    };
+
+    if (paused && canonical !== 'PreToolUse') {
+      neutral();
+
+      return;
+    }
+
     if (adapter.skip?.(nativeEvent, raw)) {
       emit(adapter.render(canonical, null, { native: nativeEvent, input: {} }));
 
       return;
     }
 
-    const { event, input } = adapter.normalize(canonical, raw, nativeEvent);
+    const normalized = adapter.normalize(canonical, raw, nativeEvent);
+    const event = normalized.event;
+    const input = event === 'PreToolUse' ? asShell(normalized.input) : normalized.input;
 
     if (!withinBudget(input)) throw new RangeError('Hook analysis limit');
 
@@ -422,6 +454,35 @@ async function main() {
 
     let { output, log } = decide(event, input, ctx);
 
+    // Paused: the pause switches off the secret and spend checks only (F6.12 round 2, V3). Every other
+    // refusal stands and is recorded: tampering, a script that would sabotage guard, an input too
+    // large to inspect. Chosen by what the pause covers, so a new kind of refusal is never dropped.
+    if (paused) {
+      const pausedKind = (kind) => /^(secret-|spend-)/.test(String(kind));
+      const refused = output?.hookSpecificOutput?.permissionDecision === 'deny';
+      const tampering = refused ? log.filter((e) => e.action === 'denied' && !pausedKind(e.kind)) : [];
+
+      if (!tampering.length) {
+        neutral();
+
+        return;
+      }
+
+      try { appendLog(tampering.map((e) => ({ ...e, mode, harness })), input.session_id, home); } catch { /* the denial still applies */ }
+
+      emit(adapter.render(event, output, { native: nativeEvent, input }));
+
+      return;
+    }
+
+    // The common tool path does not load spend parsing/state code. An open episode, a real prompt
+    // or a transcript event loads it on demand; failures cannot weaken the security decision.
+    if (session.spend || event === 'UserPromptSubmit' || (harness === 'claude' && input.transcript_path)) {
+      try {
+        ({ output, log } = await (await import('./spend-hook.mjs')).applySpendEvent({ session, event, input, harness, adapter, mode, home, output, log }));
+      } catch { /* advisory spend processing is fail-open */ }
+    }
+
     // An agent that hands over the file's contents before a read (Cursor): a file holding real
     // credentials is not read in protect mode.
     // oxlint-disable-next-line anti-slop/no-runtime-typeof -- Validate untrusted JSON or assert the boundary contract; preserve primitive type checks.
@@ -450,7 +511,7 @@ async function main() {
     emit(adapter.render(event, output, { native: nativeEvent, input }));
 
     // The alerts window, once per session (after answering: it never delays the agent).
-    try { maybeOpenWindow(input.session_id, { home, cli: path.join(path.dirname(fileURLToPath(import.meta.url)), 'watch-main.mjs') }); } catch { /* optional */ }
+    try { maybeOpenWindow(input.session_id, { home, background: harness === 'cursor' && input.is_background_agent === true, cli: path.join(path.dirname(fileURLToPath(import.meta.url)), 'watch-main.mjs') }); } catch { /* optional */ }
   } catch (e) {
     // No unchecked suffix is safe: refusing oversize tool calls keeps padding from bypassing
     // the mandatory tamper check in either mode.

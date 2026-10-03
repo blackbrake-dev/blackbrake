@@ -1,11 +1,23 @@
 // What the agent loads: skills, agents, commands, plugins, hooks and MCP servers, how much of it
 // is paid for on every turn, how much is ever used, and static patterns worth a look.
 // Static only: nothing found here is ever executed (unlike scanners that start MCP servers).
+import crypto from 'node:crypto';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { claudeDirExposure } from '../stores.mjs';
 import { cleanDeep, isLocalPath, localFileStat } from '../text.mjs';
+
+export function inventoryDelta(previous = [], current = []) {
+  const before = new Map(previous.map((item) => [item.id, item.digest]));
+  const after = new Map(current.map((item) => [item.id, item.digest]));
+
+  return {
+    added: [...after.keys()].filter((id) => !before.has(id)).sort(),
+    changed: [...after].flatMap(([id, digest]) => before.has(id) && before.get(id) !== digest ? [id] : []).sort(),
+    removed: [...before.keys()].filter((id) => !after.has(id)).sort(),
+  };
+}
 
 // A planted symlink could point at a network share (NTLM leak) or a device: see localFileStat.
 const readText = (f, max = 256 * 1024) => {
@@ -280,6 +292,37 @@ export function inventory({ home = os.homedir() } = {}) {
     projectDirs,
     ...cleanDeep(report({ settings, configIssues, mcp, skills, unique, plugins, duplicates, usedSkills, hookEvents, home, risks })),
   };
+}
+
+// Privacy-preserving inventory for SessionStart deltas. Names/configuration exist only while this
+// function runs; callers persist these keyed identities and content digests, never the source text.
+export function inventoryDigest({ home = os.homedir(), secret } = {}) {
+  if (!secret) throw new TypeError('Inventory digest secret is required');
+
+  const claudeDir = path.join(home, '.claude');
+  const settings = readJson(path.join(claudeDir, 'settings.json')) ?? {};
+  const claudeJson = readJson(path.join(home, '.claude.json')) ?? {};
+  const plugins = pluginInstalls(claudeDir, settings);
+
+  const items = [
+    ...collectItems(path.join(claudeDir, 'skills'), 'skill', 'user'),
+    ...collectItems(path.join(claudeDir, 'agents'), 'agent', 'user'),
+    ...collectItems(path.join(claudeDir, 'commands'), 'command', 'user'),
+    ...plugins.filter((plugin) => plugin.enabled).flatMap((plugin) => [
+      ...collectItems(path.join(plugin.path, 'skills'), 'skill', `plugin:${plugin.id}`),
+      ...collectItems(path.join(plugin.path, 'agents'), 'agent', `plugin:${plugin.id}`),
+    ]),
+  ];
+
+  const mcp = mcpServers(home, claudeJson, plugins);
+  const idOf = (kind, source, name) => crypto.createHmac('sha256', secret).update(`${kind}\0${source}\0${name}`).digest('hex');
+  const digestOf = (value) => crypto.createHash('sha256').update(String(value ?? '')).digest('hex');
+  const out = items.map((item) => ({ id: idOf(item.kind, item.source, item.name), digest: digestOf(readText(item.file) ?? '') }));
+
+  out.push(...plugins.flatMap((plugin) => plugin.enabled ? [{ id: idOf('plugin', 'user', plugin.id), digest: digestOf(plugin.version) }] : []));
+  out.push(...mcp.map((server) => ({ id: idOf('mcp', server.source, server.name), digest: digestOf(server.command) })));
+
+  return [...new Map(out.map((item) => [item.id, item])).values()].sort((a, b) => a.id.localeCompare(b.id));
 }
 
 function report({ settings, configIssues, mcp, skills, unique, plugins, duplicates, usedSkills, hookEvents, home, risks }) {

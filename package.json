@@ -1,6 +1,6 @@
 {
   "name": "blackbrake",
-  "version": "0.2.3",
+  "version": "0.3.0",
   "description": "Local audit of AI coding agent transcripts (exposed secrets, risky add-ons, where spend concentrates) and a guard for Claude Code. No network, no dependencies.",
   "type": "module",
   "bin": {
@@ -15,10 +15,11 @@
     "NOTICE",
     "THIRD_PARTY_NOTICES",
     "SECURITY.md",
-    "README.md"
+    "README.md",
+    "!**/*.stackdump"
   ],
   "scripts": {
-    "test": "node --test",
+    "test": "node scripts/test-sandbox.mjs",
     "build:rules": "node scripts/build-rules.mjs"
   },
   "engines": {

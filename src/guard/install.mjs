@@ -10,7 +10,10 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { t } from '../i18n.mjs';
 import { clean, isLocalPath } from '../text.mjs';
+import { mayChange } from './safety.mjs';
 import { getMode, guardHome, hasMode, setMode } from './state.mjs';
+
+const claudeConfigDir = () => process.env.CLAUDE_CONFIG_DIR || path.join(os.homedir(), '.claude');
 
 export const PLUGIN_ID = 'blackbrake@blackbrake';
 
@@ -62,10 +65,26 @@ export function assertNoLinks(target) {
 // guard's folder must be a real directory of its own: not a symlink or junction (which would make
 // a recursive delete land elsewhere), not the home folder, not a drive or filesystem root.
 export function assertOwnFolder(dir) {
-  const abs = path.resolve(dir);
-  const forbidden = [os.homedir(), path.parse(abs).root, path.dirname(os.homedir())].map((p) => path.resolve(p).toLowerCase());
+  const abs = mayChange(path.resolve(dir));
 
-  if (forbidden.includes(abs.toLowerCase())) throw new Error(`Refusing to use ${abs} as blackbrake's folder.`);
+  // An 8.3 short name (C:\Users\ALUCE~1), a \\?\ prefix or a trailing dot names the home folder
+  // without spelling it (review C, 2026-10-01). The same folder on disk (device and file id) is the
+  // same folder whatever it is called.
+  const id = (p) => {
+    try {
+      const st = fs.statSync(p, { bigint: true });
+
+      return `${st.dev}:${st.ino}`;
+    } catch {
+      return null;
+    }
+  };
+
+  const norm = (p) => path.resolve(p).replace(/^\\\\\?\\/, '').replace(/[. ]+$/, '').toLowerCase();
+  const places = [os.homedir(), path.parse(abs).root, path.dirname(os.homedir())];
+  const own = id(abs);
+
+  if (places.map(norm).includes(norm(abs)) || (own && places.map(id).includes(own))) throw new Error(`Refusing to use ${abs} as blackbrake's folder.`);
 
   assertNoLinks(abs);
 
@@ -103,6 +122,8 @@ function ownMarketplace(dest) {
 // Deletes one of guard's folders. On Windows a file in use (an antivirus scan, the alerts window)
 // can refuse a delete for a moment: retry, then say what to do instead of leaving it half gone.
 export function removeOwn(dir) {
+  mayChange(path.resolve(dir));
+
   try {
     fs.rmSync(dir, { recursive: true, force: true, maxRetries: 6, retryDelay: 250 });
   } catch (e) {
@@ -171,6 +192,8 @@ export function claudeCommand(args) {
 
 // Run the Claude Code CLI with fixed arguments and paths we built.
 export function runClaude(args, { capture = true } = {}) {
+  // Installing or removing plugins and marketplaces changes the real Claude Code configuration.
+  if (/^(install|uninstall|enable|disable|add|remove|rm|update)$/.test(args[1] ?? '') || /^(install|uninstall|enable|disable|add|remove|rm|update)$/.test(args[2] ?? '')) mayChange(path.resolve(claudeConfigDir()));
   const c = claudeCommand(args);
   const r = spawnSync(c.file, c.args, { encoding: 'utf8', stdio: capture ? 'pipe' : 'inherit', timeout: 120000, shell: c.shell });
   const out = clean(`${r.stdout ?? ''}${r.stderr ?? ''}`.trim(), 2000);
@@ -224,6 +247,9 @@ export function setup({ log = () => {} } = {}) {
 }
 
 export function uninstall({ keepLog = true, log = () => {} } = {}) {
+  // Checked before anything at all is done, Claude Code's plugin removal included (safety.mjs).
+  mayChange(path.resolve(guardHome()));
+  mayChange(path.resolve(claudeConfigDir()));
   const r1 = runClaude(['plugin', 'uninstall', PLUGIN_ID]);
   log(r1.ok ? t('Uninstalled {id}', { id: PLUGIN_ID }) : t('Plugin was not installed ({why})', { why: r1.out.split('\n')[0] || '-' }));
   const r2 = runClaude(['plugin', 'marketplace', 'remove', MARKETPLACE]);
@@ -248,10 +274,11 @@ export function uninstall({ keepLog = true, log = () => {} } = {}) {
       if (fs.existsSync(p) && !fs.lstatSync(p).isSymbolicLink()) fs.rmSync(p, { recursive: true, force: true });
     }
 
-    fs.rmdirSync(home);
+    // Already gone (a second purge, or removed by hand) is fine: the verification screen follows.
+    try { fs.rmdirSync(home); } catch (e) { if (e.code !== 'ENOENT') throw e; }
   }
 
   log(keepLog ? t('Kept your guard log in {dir}', { dir: path.join(home, 'log') }) : t('Deleted {dir}', { dir: home }));
 }
 
-const GUARD_ENTRIES = new Set(['state.json', 'log', 'sessions', 'marketplace', 'app', 'backups', 'watch.pid', 'watch-bg.pid', 'window.claim', 'fixes']);
+export const GUARD_ENTRIES = new Set(['state.json', 'log', 'sessions', 'marketplace', 'app', 'backups', 'watch.pid', 'watch-bg.pid', 'window.claim', 'window.last', 'fixes', 'reports']);

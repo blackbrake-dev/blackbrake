@@ -256,3 +256,19 @@ test('installer refuses a config it cannot parse, and never writes through a lin
   assert.match(go().error, /symbolic link/);
   assert.equal(fs.readFileSync(target, 'utf8'), '{}');
 });
+
+// Seen in a real cursor-agent session on Windows (2026-10-01): the hook's stdin starts with a UTF-8
+// byte order mark. It must be read as the same JSON, not refused as "could not check".
+test('a byte order mark before the JSON (Cursor on Windows) is read as the same input', () => {
+  const home = tmp();
+  fs.writeFileSync(path.join(home, 'state.json'), JSON.stringify({ mode: 'protect' }));
+
+  const raw = (event, input) => {
+    const r = spawnSync(process.execPath, [HOOK, event, '--harness', 'cursor'], { input: Buffer.concat([Buffer.from([0xef, 0xbb, 0xbf]), Buffer.from(JSON.stringify(input))]), encoding: 'utf8', env: { ...process.env, BLACKBRAKE_HOME: home, BLACKBRAKE_LANG: 'en', BLACKBRAKE_NO_WINDOW: '1' } });
+
+    return JSON.parse(r.stdout);
+  };
+
+  assert.deepEqual(raw('beforeShellExecution', { conversation_id: 's', command: 'ls' }), { permission: 'allow' });
+  assert.equal(raw('beforeShellExecution', { conversation_id: 's', command: 'printenv' }).permission, 'ask', 'still checked');
+});
