@@ -380,6 +380,30 @@ const claude = {
 
 export const ADAPTERS = { claude, codex, gemini, cursor, copilot, windsurf, devin };
 
+// Not decided by name (F6.12 round 2, D1): agents add and rename shell tools (Codex shell_command,
+// Cursor `shell`, Claude Monitor, an MCP "run"), so any tool guard has no own check for that carries a
+// command is checked as one. The original name stays in `shell_via`: its other arguments keep the
+// request checks.
+const OWN_CHECKS = /^(Bash|PowerShell|Write|Edit|MultiEdit|NotebookEdit|Read|NotebookRead|Grep|Glob|LS|TodoWrite|Task|Agent|AskUserQuestion|ExitPlanMode|WebFetch|WebSearch)$/;
+
+const COMMAND_FIELDS = ['command', 'cmd', 'script', 'command_line', 'commandLine', 'cmdline', 'shell_command', 'argv'];
+
+export function asShell(input) {
+  const ti = input?.tool_input;
+  const name = input?.tool_name;
+
+  // oxlint-disable-next-line anti-slop/no-runtime-typeof -- Validate untrusted JSON or assert the boundary contract; preserve primitive type checks.
+  if (typeof name !== 'string' || OWN_CHECKS.test(name) || !ti || typeof ti !== 'object' || Array.isArray(ti)) return input;
+
+  // oxlint-disable-next-line anti-slop/no-runtime-typeof -- Validate untrusted JSON or assert the boundary contract; preserve primitive type checks.
+  const c = COMMAND_FIELDS.map((k) => ti[k]).find((v) => (typeof v === 'string' && v.trim()) || (Array.isArray(v) && v.length));
+
+  if (c === undefined) return input;
+  const shell_args = Object.fromEntries(Object.entries(ti).filter(([k]) => !COMMAND_FIELDS.includes(k)));
+
+  return { ...input, tool_name: /power_?shell|pwsh/i.test(name) ? 'PowerShell' : 'Bash', shell_via: name, shell_args, tool_input: { ...ti, command: Array.isArray(c) ? c.map(String).join(' ') : c } };
+}
+
 for (const [id, adapter] of Object.entries(ADAPTERS)) {
   adapter.spendCost = id === 'claude';
   adapter.spendAsk = id === 'claude';

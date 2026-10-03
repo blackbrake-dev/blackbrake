@@ -938,7 +938,9 @@ export function decide(event, input, ctx = {}) {
 
   // oxlint-disable-next-line anti-slop/no-runtime-typeof -- Validate untrusted JSON or assert the boundary contract; preserve primitive type checks.
   const tool = typeof input.tool_name === 'string' ? input.tool_name : null;
-  const shownTool = tool ? (KNOWN_TOOLS.test(tool) ? tool : tool.startsWith('mcp__') ? 'MCP' : 'tool') : null;
+  // oxlint-disable-next-line anti-slop/no-runtime-typeof -- Validate untrusted JSON or assert the boundary contract; preserve primitive type checks.
+  const named = typeof input.shell_via === 'string' ? input.shell_via : tool;
+  const shownTool = named ? (KNOWN_TOOLS.test(named) ? named : named.startsWith('mcp__') ? 'MCP' : 'tool') : null;
   const log = [];
 
   const note = (kind, action, extra = {}) => {
@@ -995,7 +997,8 @@ export function decide(event, input, ctx = {}) {
   if (event === 'PreToolUse') {
     const ti = input.tool_input ?? {};
     const commandViews = /^(Bash|PowerShell)$/.test(input.tool_name ?? '') ? shellViews(ti.command) : null;
-    const why = tamper(input.tool_name, ti, ctx, commandViews);
+    // A shell tool under another name (asShell): its other arguments are checked like any request's.
+    const why = tamper(input.tool_name, ti, ctx, commandViews) ?? (input.shell_via ? tamper(input.shell_via, input.shell_args ?? {}, ctx) : null);
 
     if (why) {
       note('tamper', 'denied');
@@ -1053,8 +1056,8 @@ export function decide(event, input, ctx = {}) {
 
     // Requests that leave the machine: a secret in a URL or query is exfiltration. A tool this
     // version does not know (a new built-in, an agent's memory tool) is treated the same way.
-    if (/^(WebFetch|WebSearch)$/.test(tool ?? '') || (tool ?? '').startsWith('mcp__') || (tool && !KNOWN_TOOLS.test(tool))) {
-      const text = textOf(ti);
+    if (/^(WebFetch|WebSearch)$/.test(tool ?? '') || (tool ?? '').startsWith('mcp__') || (tool && !KNOWN_TOOLS.test(tool)) || input.shell_via) {
+      const text = textOf(input.shell_via ? input.shell_args ?? {} : ti);
       const found = realSecrets(text);
       const requestedFile = text.split('\n').find((s) => isSensitivePath(s));
 

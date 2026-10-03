@@ -8,7 +8,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { detectLang, setLang, t } from '../i18n.mjs';
 import { loadRules } from '../secrets/engine.mjs';
-import { ADAPTERS, renderError } from './harnesses.mjs';
+import { ADAPTERS, asShell, renderError } from './harnesses.mjs';
 import { decide, isSensitivePath, linkedPlaces, loginItemFile, protectedTarget, shellViews, withinBudget } from './policy.mjs';
 import { isLocalPath, localFileStat } from '../text.mjs';
 import { isPaused } from './pause.mjs';
@@ -284,7 +284,9 @@ async function main() {
       return;
     }
 
-    const { event, input } = adapter.normalize(canonical, raw, nativeEvent);
+    const normalized = adapter.normalize(canonical, raw, nativeEvent);
+    const event = normalized.event;
+    const input = event === 'PreToolUse' ? asShell(normalized.input) : normalized.input;
 
     if (!withinBudget(input)) throw new RangeError('Hook analysis limit');
 
