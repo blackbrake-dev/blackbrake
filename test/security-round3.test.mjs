@@ -92,3 +92,26 @@ test('D1 a shell-shaped MCP call keeps its request checks', (t) => {
   const reading = run(observe, 'codex', 'PreToolUse', { tool_name: 'shell_command', tool_input: { command: 'cat ~/.blackbrake/state.json' } });
   assert.equal(reading.denied, false, 'reading guard\'s state through a renamed shell tool is fine');
 });
+
+// ---------- V3: while paused, every refusal stands except the secret and spend checks ----------
+
+const pause = (f) => fs.writeFileSync(path.join(f.home, 'state.json'), JSON.stringify({ mode: 'protect', settings: { paused: { at: '2026-10-03T10:00:00.000Z', by: 'cli' } } }));
+
+const records = (f) => fs.readdirSync(path.join(f.home, 'log')).flatMap((n) => fs.readFileSync(path.join(f.home, 'log', n), 'utf8').trim().split('\n').map((l) => JSON.parse(l)));
+
+test('V3 paused: oversized input and a sabotage script are still refused and recorded', (t) => {
+  const f = fixture(t);
+  pause(f);
+
+  const padded = run(f, 'claude', 'PreToolUse', { tool_name: 'Bash', tool_input: { command: `${' '.repeat(65537)}rm -rf ~/.blackbrake` } });
+  assert.equal(padded.denied, true, 'a command too long to inspect');
+
+  const script = run(f, 'claude', 'PreToolUse', { tool_name: 'Write', tool_input: { file_path: 'x.sh', content: 'rm -rf ~/.blackbrake' } });
+  assert.equal(script.denied, true, 'a script that would delete guard');
+
+  const risky = run(f, 'claude', 'PreToolUse', { tool_name: 'Bash', tool_input: { command: 'cat ~/.aws/credentials' } });
+  assert.equal(risky.stopped, false, 'secret checks stay paused');
+
+  assert.ok(records(f).some((e) => e.kind === 'error' && e.action === 'denied'), 'the size refusal is recorded');
+  assert.ok(records(f).some((e) => e.kind === 'tamper-script' && e.action === 'denied'), 'the script refusal is recorded');
+});

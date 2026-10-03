@@ -253,10 +253,8 @@ async function main() {
 
     // Paused by the user ("blackbrake pause"): a neutral answer in the agent's own format, nothing
     // analysed, blocked or recorded beyond one "paused" line per session. SessionStart says so.
-    // Paused by the user ("blackbrake pause"): a neutral answer in the agent's own format, nothing
-    // analysed, blocked or recorded beyond one "paused" line per session. SessionStart says so.
-    // A tool call is still checked for tampering with blackbrake itself (review A, 2026-10-01): the
-    // pause stops the secret and spend checks, it does not let an agent rewrite or remove guard.
+    // A tool call is still checked (review A, 2026-10-01; round 2 V3): the pause stops the secret
+    // and spend checks, it does not let an agent rewrite or remove guard.
     const paused = isPaused(home);
     const pausedId = raw.session_id ?? raw.conversation_id ?? raw.trajectory_id ?? raw.sessionId ?? null;
 
@@ -456,9 +454,13 @@ async function main() {
 
     let { output, log } = decide(event, input, ctx);
 
-    // Paused: only a tampering finding stands (refused and recorded); anything else is neutral.
+    // Paused: the pause switches off the secret and spend checks only (F6.12 round 2, V3). Every other
+    // refusal stands and is recorded: tampering, a script that would sabotage guard, an input too
+    // large to inspect. Chosen by what the pause covers, so a new kind of refusal is never dropped.
     if (paused) {
-      const tampering = log.filter((e) => e.kind === 'tamper');
+      const pausedKind = (kind) => /^(secret-|spend-)/.test(String(kind));
+      const refused = output?.hookSpecificOutput?.permissionDecision === 'deny';
+      const tampering = refused ? log.filter((e) => e.action === 'denied' && !pausedKind(e.kind)) : [];
 
       if (!tampering.length) {
         neutral();
