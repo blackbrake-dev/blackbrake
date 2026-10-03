@@ -631,13 +631,23 @@ function nearGuardName(word) {
 }
 
 // Variables given a plain literal value in the command itself (d=.ssh, $p = 'x'): shellViews resolves
-// those, so they are not gaps. A bash nameref (declare -n r=d) is not a value.
+// those, so they are not gaps. Every assignment must be literal; setters/namerefs may replace
+// that value indirectly. Bash names are case sensitive, so d never makes D a known value.
 function literalNames(command) {
   const names = new Set();
+  const invalid = new Set();
+  const text = String(command);
 
-  for (const m of String(command).matchAll(/(?:^|[\s;&|(])\$?([A-Za-z_]\w*)\s*=\s*(["']?)([^\s;&|$`()'"]+)\2(?=[\s;&|)]|$)/g)) names.add(m[1].toLowerCase());
+  for (const m of text.matchAll(/(?:^|[\s;&|(])\$?([A-Za-z_]\w*)\s*(\+?=)\s*/g)) {
+    const value = text.slice(m.index + m[0].length);
 
-  for (const m of String(command).matchAll(/\b(?:declare|typeset|local)\s+-\w*n\w*\s+([A-Za-z_]\w*)/g)) names.delete(m[1].toLowerCase());
+    if (m[2] === '=' && /^(["']?)([^\s;&|$`()'"]+)\1(?=[\s;&|)]|$)/.test(value)) names.add(m[1]);
+    else invalid.add(m[1]);
+  }
+
+  if (/\b(?:read|readarray|mapfile|getopts|for|select|foreach|declare|typeset|local|eval|source|unset|Set-Variable|New-Variable|sv)\b|\bprintf\s+(?:-[^\s;&|]+\s+)*-v/i.test(asRun(text))) names.clear();
+
+  for (const name of invalid) names.delete(name);
 
   return names;
 }
@@ -647,7 +657,7 @@ export function guardThroughGap(view, command = view) {
   let v = unquote(view).replace(HOME_REF, '~');
 
   for (let i = 0; i < 8; i++) {
-    const next = v.replace(UNRESOLVED, (m) => (known.has(m.replace(/^\$\{?|\}$/g, '').toLowerCase()) ? m : '\0'));
+    const next = v.replace(UNRESOLVED, (m) => (known.has(m.replace(/^\$\{?|\}$/g, '')) ? m : '\0'));
 
     if (next === v) break;
     v = next;
