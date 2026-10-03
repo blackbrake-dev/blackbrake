@@ -34,8 +34,10 @@ const run = (args, { lang = 'en', home = tmp(), input = '' } = {}) => {
   return { home, ...spawnSync(process.execPath, [BIN, ...args], { env, encoding: 'utf8', input, timeout: 30000 }) };
 };
 
-test('the registry lists the three features with their commands and rows', () => {
-  assert.deepEqual(FEATURES.map((f) => f.id), ['pause', 'uninstall-menu', 'report']);
+test('the registry lists the features with their commands and rows', () => {
+  assert.deepEqual(FEATURES.map((f) => f.id), ['pause', 'brakes', 'uninstall-menu', 'report']);
+  assert.equal(commandArgs('brakes'), 2, 'brakes takes a brake and a value');
+  assert.equal(findMenuRow('brakes').slot, 'protect');
   assert.ok(commandFor('pause') && commandFor('resume') && commandFor('report'));
   assert.equal(commandFor('uninstall'), undefined, 'uninstall stays a built-in command');
   assert.equal(commandFor('nope'), undefined);
@@ -106,7 +108,7 @@ test('the fixed home rows stay five; the report rows sit in Help and settings, b
 
 test('help lines come from the registry: usage and text for each command', () => {
   const rows = helpRows();
-  assert.deepEqual(rows.map((r) => r.usage), ['blackbrake pause', 'blackbrake resume', 'blackbrake report [product|security]']);
+  assert.deepEqual(rows.map((r) => r.usage), ['blackbrake pause', 'blackbrake resume', 'blackbrake brakes [<brake> <value> | reset]', 'blackbrake report [product|security]']);
   assert.ok(rows.every((r) => r.text.length > 10));
 
   const en = run(['--help']);

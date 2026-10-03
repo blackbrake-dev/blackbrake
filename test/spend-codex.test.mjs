@@ -266,7 +266,7 @@ test('codex-spend-state-holds-numbers-and-hashes-only', () => {
 
   const state = JSON.parse(fs.readFileSync(path.join(bb, 'spend', 'codex.json'), 'utf8'));
 
-  assert.deepEqual(state, { baseline: { n: 30, p50: 100, p90: 100, ready: true }, rate: { primary: { usedPercent: 12.5, windowMinutes: 300 }, secondary: { usedPercent: 3, windowMinutes: 10080 } } });
+  assert.deepEqual(state, { baseline: { n: 30, p50: 100, p90: 100, q: { 50: 100, 75: 100, 90: 100, 95: 100, 99: 100 }, ready: true }, rate: { primary: { usedPercent: 12.5, windowMinutes: 300 }, secondary: { usedPercent: 3, windowMinutes: 10080 } } });
 
   const log = fs.readdirSync(path.join(bb, 'log')).flatMap((f) => fs.readFileSync(path.join(bb, 'log', f), 'utf8').split('\n').filter(Boolean).map((l) => JSON.parse(l)));
   const entry = log.find((e) => e.kind === 'spend-tokens');

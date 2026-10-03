@@ -5,6 +5,7 @@ import * as pause from './i18n/es-pause.mjs';
 import * as windowText from './i18n/es-window.mjs';
 import * as report from './i18n/es-report.mjs';
 import * as uninstall from './i18n/es-uninstall.mjs';
+import * as brakes from './i18n/es-brakes.mjs';
 
 export const ES = {
   'blackbrake guard · PROTECT: risky actions are checked before execution. Prompt blocking and output redaction depend on the agent\'s hook capabilities.': 'blackbrake guard · PROTEGER: las acciones de riesgo se revisan antes de ejecutarse. El bloqueo de mensajes y la ocultación de salidas dependen de los ganchos del agente.',
@@ -693,7 +694,7 @@ export const ES_PATTERNS = [
 // To add a file: import it above and list it in FEATURE_TEXTS (test/scaffold.test.mjs fails if a
 // src/i18n/es-*.mjs file is missing from this list). The list is static on purpose: the guard test
 // forbids computed dynamic imports, and static imports cost less at each hook start.
-export const FEATURE_TEXTS = [scaffold, pause, report, uninstall, windowText];
+export const FEATURE_TEXTS = [scaffold, pause, report, uninstall, windowText, brakes];
 
 export function mergeFeatureTranslations(modules, target = ES, patterns = ES_PATTERNS) {
   for (const mod of modules) {

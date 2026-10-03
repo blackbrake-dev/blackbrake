@@ -1,19 +1,31 @@
 import crypto from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
+import { PERCENTILES } from './spend-settings.mjs';
 import { guardHome, sessionHash, writePrivate } from './state.mjs';
 
 const readJson = (file) => { try { return JSON.parse(fs.readFileSync(file, 'utf8')); } catch { return null; } };
 
 const spendDir = (home) => path.join(home, 'spend');
 
-const safeBaseline = (harness, value) => ({
-  harness,
-  n: Number.isInteger(value?.n) && value.n >= 0 ? value.n : 0,
-  p50: Number.isFinite(value?.p50) && value.p50 >= 0 ? value.p50 : 0,
-  p90: Number.isFinite(value?.p90) && value.p90 >= 0 ? value.p90 : 0,
-  ready: value?.ready === true,
-});
+const amount = (v) => (Number.isFinite(v) && v >= 0 ? v : null);
+
+function safeBaseline(harness, value) {
+  const out = {
+    harness,
+    n: Number.isInteger(value?.n) && value.n >= 0 ? value.n : 0,
+    p50: amount(value?.p50) ?? 0,
+    p90: amount(value?.p90) ?? 0,
+  };
+
+  // The chosen-percentile table (0.3.0); a baseline saved before has none and uses its p90.
+  const q = PERCENTILES.flatMap((p) => (amount(value?.q?.[p]) === null ? [] : [[p, value.q[p]]]));
+
+  if (q.length) out.q = Object.fromEntries(q);
+  out.ready = value?.ready === true;
+
+  return out;
+}
 
 export function getSpendBaseline(harness, home = guardHome()) {
   const value = readJson(path.join(spendDir(home), 'baseline.json'))?.[harness];
@@ -74,7 +86,7 @@ export function setInventorySnapshot(items, home = guardHome()) {
 
 const loopFile = (home, id) => path.join(spendDir(home), 'loops', `${sessionHash(id)}.jsonl`);
 
-export function readLoopSnapshot(id, home = guardHome(), now = Date.now()) {
+export function readLoopSnapshot(id, home = guardHome(), now = Date.now(), { windowMs = 120_000, windowSize = 8 } = {}) {
   let text = '';
   let fd;
 
@@ -119,11 +131,11 @@ export function readLoopSnapshot(id, home = guardHome(), now = Date.now()) {
     try {
       const row = JSON.parse(line);
 
-      if (Number.isFinite(row?.at) && row.at <= now && now - row.at <= 120_000 && /^[a-f0-9]{64}$/.test(row?.fingerprint)) rows.push(row);
+      if (Number.isFinite(row?.at) && row.at <= now && now - row.at <= windowMs && /^[a-f0-9]{64}$/.test(row?.fingerprint)) rows.push(row);
     } catch { /* a partial final line is ignored */ }
   }
 
-  const calls = rows.slice(-8).map(({ at, fingerprint }) => ({ at, fingerprint }));
+  const calls = rows.slice(-windowSize).map(({ at, fingerprint }) => ({ at, fingerprint }));
   const alerted = rows.flatMap((row) => row.alert === true ? [row.fingerprint] : []);
 
   return { calls, alerted };

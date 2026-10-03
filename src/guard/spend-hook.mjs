@@ -11,6 +11,7 @@ import {
 } from './spend-state.mjs';
 import { setSession } from './state.mjs';
 import { spendAlert, withinTokenBudget } from './spend.mjs';
+import { getSpendSettings } from './spend-settings.mjs';
 
 const MIB = 1024 * 1024;
 
@@ -340,15 +341,21 @@ export async function applySpendEvent({ session, event, input, harness, adapter,
   // Only a PreToolUse answer can ask; elsewhere a protect alert waits for the next tool call.
   const canAsk = Boolean(adapter.spendAsk) && event === 'PreToolUse';
 
-  if (event === 'PreToolUse' && spend.open) {
+  const brakes = getSpendSettings(home);
+
+  if (event === 'PreToolUse' && spend.open && brakes.loop.on) {
     const now = Date.now();
-    const detector = createLoopDetector({ secret: spendSecret(), snapshot: readLoopSnapshot(input.session_id, home, now) });
+    const { repeats, minutes } = brakes.loop;
+    const loopWindow = { windowMs: minutes * 60e3, windowSize: Math.max(8, repeats + 5) };
+    const detector = createLoopDetector({ secret: spendSecret(), threshold: repeats, ...loopWindow, snapshot: readLoopSnapshot(input.session_id, home, now, loopWindow) });
     const repeated = detector.record(input.tool_name, input.tool_input, now);
 
     appendLoopCall(input.session_id, { ...repeated, at: now }, home);
 
     if (repeated.alert) {
-      const message = t('blackbrake: the same call was requested 3 times in 2 minutes. It may be a loop; continue?');
+      const message = repeats === 3 && minutes === 2
+        ? t('blackbrake: the same call was requested 3 times in 2 minutes. It may be a loop; continue?')
+        : t('blackbrake: the same call was requested {n} times in {m} minutes. It may be a loop; continue?', { n: repeats, m: minutes });
 
       notices.push({ action: mode === 'protect' && canAsk ? 'ask' : 'warn', message });
       spendLog.push({ ev: event, kind: 'spend-loop', action: mode === 'protect' && canAsk ? 'asked' : 'warned', fingerprint: repeated.fingerprint.slice(0, 16) });
@@ -356,7 +363,7 @@ export async function applySpendEvent({ session, event, input, harness, adapter,
   }
 
   if (spend.open && adapter.spendCost && (canAsk || !(mode === 'protect' && adapter.spendAsk))) {
-    const alert = spendAlert({ baseline: getSpendBaseline(harness, home), episode: spend.open, mode, canAsk });
+    const alert = spendAlert({ baseline: getSpendBaseline(harness, home), episode: spend.open, mode, canAsk, settings: brakes });
 
     if (alert) {
       notices.push(alert);

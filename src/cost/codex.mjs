@@ -9,7 +9,8 @@ import { fileURLToPath } from 'node:url';
 import { t } from '../i18n.mjs';
 import { isLocalPath } from '../text.mjs';
 import { isHarnessText } from '../transcripts.mjs';
-import { baselineFromEpisodes } from '../guard/spend.mjs';
+import { baselineFromEpisodes, overTokenLimit, thresholdFor } from '../guard/spend.mjs';
+import { getSpendSettings } from '../guard/spend-settings.mjs';
 import { appendLog, guardHome, writePrivate } from '../guard/state.mjs';
 import { tailTranscript } from './live.mjs';
 
@@ -241,9 +242,9 @@ function readToEnd(file, root, onRecord) {
 
 const baselineOf = (tokens) => {
   // The baseline math is unit-free: here the unit is tokens.
-  const { n, p50, p90, ready } = baselineFromEpisodes(tokens.map((cost) => ({ cost })), 'codex');
+  const { n, p50, p90, q, ready } = baselineFromEpisodes(tokens.map((cost) => ({ cost })), 'codex');
 
-  return { n, p50, p90, ready };
+  return { n, p50, p90, q, ready };
 };
 
 function scanHistory(root) {
@@ -324,7 +325,10 @@ export function createCodexSpend({ home = guardHome(), root = codexRoot(), notif
 
       if (sample.resetAt !== null && (state.maxResetAt === null || sample.resetAt > state.maxResetAt)) state.maxResetAt = sample.resetAt;
 
-      if (!live || before >= spec.threshold || sample.percent < spec.threshold) continue;
+      const brake = getSpendSettings(home).quota;
+      const threshold = sample.name === 'primary' ? brake.fiveHour : brake.weekly;
+
+      if (!live || !brake.on || before >= threshold || sample.percent < threshold) continue;
 
       if (sample.resetAt === null ? state.unknownAlerted : state.alertedResetAt === sample.resetAt) continue;
 
@@ -342,11 +346,11 @@ export function createCodexSpend({ home = guardHome(), root = codexRoot(), notif
 
       saveQuota();
 
-      const entry = { ev: 'Codex', kind: 'spend-quota', action: 'warned', harness: 'codex', windowMinutes: spec.minutes, threshold: spec.threshold, usedPercent: sample.percent };
+      const entry = { ev: 'Codex', kind: 'spend-quota', action: 'warned', harness: 'codex', windowMinutes: spec.minutes, threshold, usedPercent: sample.percent };
 
       appendLog([entry], 'codex:quota', home);
 
-      try { notifier?.('blackbrake · Codex', t('Codex {window} usage reached {percent}% (alert at {threshold}%). Check your remaining quota.', { window: t(spec.label), percent: sample.percent, threshold: spec.threshold })); } catch { /* the log keeps it */ }
+      try { notifier?.('blackbrake · Codex', t('Codex {window} usage reached {percent}% (alert at {threshold}%). Check your remaining quota.', { window: t(spec.label), percent: sample.percent, threshold })); } catch { /* the log keeps it */ }
 
       alerts.push(entry);
     }
@@ -372,7 +376,9 @@ export function createCodexSpend({ home = guardHome(), root = codexRoot(), notif
 
     appendLog([entry], `codex:${crypto.createHash('sha256').update(file).digest('hex')}`, home);
 
-    try { notifier?.('blackbrake · Codex', t('This Codex episode is at {tokens} tokens; your p90 is {p90}.', { tokens: open.tokens, p90: baseline.p90 })); } catch { /* the log keeps it */ }
+    const pct = getSpendSettings(home).tokens.percentile;
+
+    try { notifier?.('blackbrake · Codex', pct === 90 ? t('This Codex episode is at {tokens} tokens; your p90 is {p90}.', { tokens: open.tokens, p90: baseline.p90 }) : t('This Codex episode is at {tokens} tokens; your p{pct} is {limit}.', { tokens: open.tokens, pct, limit: thresholdFor(baseline, pct) })); } catch { /* the log keeps it */ }
 
     return entry;
   };
@@ -407,7 +413,7 @@ export function createCodexSpend({ home = guardHome(), root = codexRoot(), notif
 
           rate = state.rate ?? rate;
 
-          if (state.open && !state.open.alerted && baseline.ready && state.open.tokens > baseline.p90) alerts.push(warn(file, state.open));
+          if (state.open && !state.open.alerted && overTokenLimit(baseline, state.open.tokens, getSpendSettings(home))) alerts.push(warn(file, state.open));
         }
 
         if (state.catchUp && read.state.offset >= read.state.size) state.catchUp = false;

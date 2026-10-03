@@ -8,7 +8,8 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { t } from '../i18n.mjs';
 import { isLocalPath } from '../text.mjs';
-import { baselineFromEpisodes } from '../guard/spend.mjs';
+import { baselineFromEpisodes, overTokenLimit } from '../guard/spend.mjs';
+import { getSpendSettings } from '../guard/spend-settings.mjs';
 import { appendLog, guardHome, writePrivate } from '../guard/state.mjs';
 
 const MIB = 1024 * 1024;
@@ -165,9 +166,9 @@ function readSession(file, root, stat, maxBytes) {
 }
 
 const baselineOf = (values) => {
-  const { n, p50, p90, ready } = baselineFromEpisodes([...values].map((cost) => ({ cost })), 'devin');
+  const { n, p50, p90, q, ready } = baselineFromEpisodes([...values].map((cost) => ({ cost })), 'devin');
 
-  return { n, p50, p90, ready };
+  return { n, p50, p90, q, ready };
 };
 
 function scanHistory(root, maxBytes) {
@@ -291,13 +292,13 @@ export function createDevinSpend({ home = guardHome(), root = devinRoot(), notif
           if (episode.id === suppressed) continue;
 
           if (episode.closed && !counted.has(episode.id)) {
-            if (known?.openId === episode.id && !alerted.has(episode.id) && baseline.ready && episode.tokens > baseline.p90) alerts.push(warn(file, episode));
+            if (known?.openId === episode.id && !alerted.has(episode.id) && overTokenLimit(baseline, episode.tokens, getSpendSettings(home))) alerts.push(warn(file, episode));
 
             counted.set(episode.id, episode.tokens);
             changed = true;
           }
 
-          if (!episode.closed && !alerted.has(episode.id) && baseline.ready && episode.tokens > baseline.p90) alerts.push(warn(file, episode));
+          if (!episode.closed && !alerted.has(episode.id) && overTokenLimit(baseline, episode.tokens, getSpendSettings(home))) alerts.push(warn(file, episode));
         }
 
         if (changed) baseline = baselineOf(counted.values());

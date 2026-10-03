@@ -164,6 +164,12 @@ counting them splits expensive episodes into pieces and hides the concentration.
   prompts, commands, file contents or secret values. `blackbrake status` and `blackbrake log` read it.
 - Spend brakes warn at your per-agent local p90 after 30 episodes (list-price estimate, not savings);
   live cost is currently available for Claude Code, while repeated-call warnings cover all seven agents.
+  **You choose how soon each brake warns**: `blackbrake brakes` (or Protection → Spend brakes in the
+  menu) shows them and changes them — episode cost at your p50/75/90/95/99 or at a fixed amount, episode
+  tokens (Codex, Devin) at a percentile, repeated calls (2–10 times within 1–30 minutes), and Codex quota
+  alerts (50–100%); any brake can be switched off. Making a brake warn sooner needs nothing; making it
+  warn later or never lowers protection, so you type `loosen` in your own terminal. Values out of range
+  or a damaged settings file fall back to the defaults.
 - Recoverable errors refuse tool calls in both modes, and refuse prompts in protect where the
   agent supports it. Output that cannot be inspected is withheld where replacement is supported.
   A failure to write the log never cancels a denial. The hook times out incomplete stdin after five
@@ -322,6 +328,7 @@ blackbrake audit [--path <dir>] [--home <dir>] [--json] [--all]
 blackbrake scan [--agent <id>]
 blackbrake fix [--undo]
 blackbrake pause | resume
+blackbrake brakes [<brake> <value> | reset]      # e.g. cost.percentile 95 · loop.repeats 4 · quota off
 blackbrake report [product|security] | list | show <name> | check <name> | send <name> | delete <name>|--all
 blackbrake uninstall [--agent <id>] [--purge]
 ```
@@ -344,8 +351,8 @@ Requires Node.js 20 or later; use 22 or 24 (LTS), since Node 20 has reached its 
 **v0.3.0 (prepared 2026-10-03, not published yet):** pause and resume, uninstall from the menu with a
 process sweep that checks nothing is left running, the alerts window opening once per session (not
 over SSH, not for background agents, at most once every 10 minutes), Cursor's `sessionStart`, opt-in
-local reports, and spend brakes (episode cost and token alerts against your own history, repeated tool
-calls). Fixed on the way: Cursor on Windows sends its hook input with a byte order mark, which made
+local reports, and spend brakes you can adjust (episode cost and token alerts against your own history
+or a fixed amount, repeated tool calls, Codex quota). Fixed on the way: Cursor on Windows sends its hook input with a byte order mark, which made
 v0.2.3 refuse every Cursor step as "could not check" (found in a real `cursor-agent` session; whether
 the Cursor editor does the same is still to be confirmed). Done before publishing: independent security
 review rounds, with every high and medium finding they reported fixed, and CI on Windows, macOS and Linux × Node

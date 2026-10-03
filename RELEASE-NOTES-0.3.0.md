@@ -19,6 +19,11 @@ Pause, clean uninstall, spend brakes and opt-in reports, plus a round of guard h
   agent repeats the same tool call in a loop, and when Codex quota is running low. Live cost includes
   Claude Code subagents. Costs are API-price equivalents, not your bill; Codex costs in dollars are
   not shown because the model and tier of each response cannot be attributed reliably.
+- **Adjustable spend brakes** (`blackbrake brakes`, or Protection → Spend brakes in the menu): choose
+  the percentile of your own history (50/75/90/95/99) or a fixed amount per episode, the token
+  percentile, how many repeated calls in how many minutes count as a loop, and the Codex quota alert
+  levels; or switch any brake off. Tightening needs nothing; loosening asks you to type `loosen` in
+  your own terminal, and an AI agent is denied changing them. Defaults are the same as before.
 - **Opt-in reports** (`blackbrake report`): a plain-text draft on your computer that you read whole,
   edit, and send yourself from your mail app if you want. blackbrake sends nothing.
 
@@ -34,7 +39,7 @@ Pause, clean uninstall, spend brakes and opt-in reports, plus a round of guard h
 
 ## How it was checked
 
-- 555 tests: 552 pass, 0 fail, 3 skipped (platform-specific), run in a temporary home.
+- 568 tests: 565 pass, 0 fail, 3 skipped (platform-specific), run in a temporary home.
 - CI on Windows, macOS and Linux × Node 20, 22 and 24: 9/9 green.
 - Review rounds with independent agents; every high and medium finding they reported was fixed and
   re-checked.

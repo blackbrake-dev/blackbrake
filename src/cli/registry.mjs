@@ -28,11 +28,12 @@
 // positional words), print(lines), package.json, and (for menu rows) the state the menu was drawn
 // with. Spanish text goes in src/i18n/es-<name>.mjs (`export const ES = { 'English': 'Español' }`,
 // optionally `ES_PATTERNS`); src/i18n-es.mjs merges those files by itself.
+import brakes from './features/brakes.mjs';
 import pause from './features/pause.mjs';
 import report from './features/report.mjs';
 import uninstallMenu from './features/uninstall-menu.mjs';
 
-export const FEATURES = [pause, uninstallMenu, report];
+export const FEATURES = [pause, brakes, uninstallMenu, report];
 
 const commands = () => FEATURES.flatMap((f) => (f.commands ?? []).map((c) => ({ ...c, feature: f.id })));
 
