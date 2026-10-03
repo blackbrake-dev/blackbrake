@@ -32,8 +32,8 @@ async function waitFor(check, message, timeoutMs = 15000) {
 // process table then shows the title, not the script path. Checked on every platform by feeding
 // what /proc and ps report.
 test('watcher identification survives the process title rewrite on Linux and macOS', () => {
-  const linux = (cmdline) => isWatcherProcess(42, { platform: 'linux', read: () => cmdline });
-  const mac = (command) => isWatcherProcess(42, { platform: 'darwin', find: () => '/bin/ps', run: () => ({ stdout: `${command}\n` }) });
+  const linux = (cmdline) => isWatcherProcess(42, { home: '/h/.blackbrake', platform: 'linux', read: () => cmdline });
+  const mac = (command) => isWatcherProcess(42, { home: '/h/.blackbrake', platform: 'darwin', find: () => '/bin/ps', run: () => ({ stdout: `${command}\n` }) });
 
   assert.equal(linux('blackbrake watcher\0\0\0'), true, 'Linux after the title rewrite');
   assert.equal(linux('/usr/bin/node\0/h/.blackbrake/app/src/guard/watch-main.mjs\0--background\0'), true, 'Linux before it');

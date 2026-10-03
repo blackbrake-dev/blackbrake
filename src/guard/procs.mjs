@@ -73,13 +73,17 @@ export function commandOf(pid, { platform = process.platform, run = spawnSync, f
   }
 }
 
+// What classify needs from the sweep options: guard's folder (V4: the script must be guard's own
+// copy under it, or this checkout) and the system (case on Windows). Undefined means the defaults.
+const mineOf = (o) => ({ home: o.home, platform: o.platform });
+
 // The pids of one kind, or null when the process table could not be read.
 const sweepOf = (kind, o) => {
   const all = (o.list ?? (() => listProcesses(o)))();
 
   if (!Array.isArray(all)) return null;
 
-  return all.filter((x) => validPid(x.pid) && x.pid > 1 && x.pid !== (o.self ?? process.pid) && classify(x.cmd) === kind).map((x) => x.pid);
+  return all.filter((x) => validPid(x.pid) && x.pid > 1 && x.pid !== (o.self ?? process.pid) && classify(x.cmd, mineOf(o)) === kind).map((x) => x.pid);
 };
 
 export const findWatchers = (o = {}) => sweepOf('watcher', o);
@@ -101,7 +105,7 @@ export function stopKind(kind, o = {}) {
   const signal = (pids, sig) => {
     for (const pid of pids) {
       // Re-verified at the last moment: the table may be old and the pid may be somebody else's now.
-      if (classify(read(pid)) !== kind) continue;
+      if (classify(read(pid), mineOf(o)) !== kind) continue;
 
       try { kill(pid, sig); } catch { /* gone already */ }
     }

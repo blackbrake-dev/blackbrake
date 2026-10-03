@@ -16,7 +16,12 @@ test('real watchers and windows, as the process tables show them on each system'
     ['blackbrake watcher', 'watcher'],
     ['blackbrake watch', 'window'],
     ['blackbrake watcher   ', 'watcher'],
-  ]) assert.equal(classify(cmd), kind, cmd);
+  ]) {
+    const platform = cmd.includes('C:') ? 'win32' : cmd.includes('/Users/') ? 'darwin' : 'linux';
+    const home = platform === 'win32' ? 'C:/Users/ana/.blackbrake' : platform === 'darwin' ? '/Users/ana/.blackbrake' : '/home/ana/.blackbrake';
+
+    assert.equal(classify(cmd, { home, platform }), kind, cmd);
+  }
 });
 
 test('a command line that only mentions the file, or a look-alike title, is not ours', () => {

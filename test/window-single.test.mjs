@@ -33,7 +33,12 @@ test('a live alerts window from any guard copy stops a second one from opening',
   const env = { DISPLAY: ':0' };
 
   try {
-    assert.equal(maybeOpenWindow('s1', { home, env, cli: '/h/watch-main.mjs', spawner, command, running: () => true }), false);
+    assert.equal(maybeOpenWindow('s1', { home, env, cli: '/h/watch-main.mjs', spawner, command, running: (options) => {
+      assert.equal(options.home, home);
+      assert.equal(options.platform, process.platform);
+
+      return true;
+    } }), false);
     assert.equal(calls.length, 0, 'no terminal is started');
     assert.equal(maybeOpenWindow('s2', { home, env, cli: '/h/watch-main.mjs', spawner, command, running: () => false }), true);
     assert.equal(calls.length, 1);
@@ -44,10 +49,10 @@ test('a live alerts window from any guard copy stops a second one from opening',
 
 test('the process table tells the alerts window from the background watcher on each system', () => {
   const self = process.pid;
-  const linux = (procs) => liveWindowRunning({ platform: 'linux', readdir: () => Object.keys(procs), read: (f) => procs[f.split('/')[2]] });
+  const linux = (procs) => liveWindowRunning({ home: '/r', platform: 'linux', readdir: () => Object.keys(procs), read: (f) => procs[f.split('/')[2]] });
 
   assert.equal(linux({ 101: 'blackbrake watch\0\0' }), true, 'Linux: the window after its title rewrite');
-  assert.equal(linux({ 102: '/usr/bin/node\0/r/src/guard/watch-main.mjs\0watch\0' }), true, 'Linux: before it');
+  assert.equal(linux({ 102: '/usr/bin/node\0/r/app/src/guard/watch-main.mjs\0watch\0' }), true, 'Linux: before it');
   assert.equal(linux({ 103: 'blackbrake watcher\0', 104: '/usr/bin/node\0/h/watch-main.mjs\0--background\0' }), false, 'Linux: only the background watcher');
   assert.equal(linux({ [self]: 'blackbrake watch\0' }), false, 'this process is not another window');
   assert.equal(linux({ 105: 'vim\0blackbrake watch notes\0' }), false, 'an argument is not a window');
@@ -57,9 +62,9 @@ test('the process table tells the alerts window from the background watcher on e
   assert.equal(mac('  200 blackbrake watch\n  201 /bin/zsh\n'), true, 'macOS: the window');
   assert.equal(mac(`  202 blackbrake watcher\n  ${self} blackbrake watch\n`), false, 'macOS: watcher and this process only');
 
-  const win = (out) => liveWindowRunning({ platform: 'win32', find: () => 'powershell.exe', run: () => ({ stdout: out }) });
+  const win = (out) => liveWindowRunning({ home: 'C:/r', platform: 'win32', find: () => 'powershell.exe', run: () => ({ stdout: out }) });
 
-  assert.equal(win('300\t"C:\\node.exe" "C:\\r\\src\\guard\\watch-main.mjs" watch\r\n'), true, 'Windows: the window');
+  assert.equal(win('300\t"C:\\node.exe" "C:\\r\\app\\src\\guard\\watch-main.mjs" watch\r\n'), true, 'Windows: the window');
   assert.equal(win('301\t"C:\\node.exe" "C:\\h\\app\\src\\guard\\watch-main.mjs" --background\r\n'), false, 'Windows: the background watcher');
   assert.equal(win(''), false, 'Windows: nothing running');
   assert.equal(liveWindowRunning({ platform: 'win32', find: () => null }), false, 'no process table: the per-folder check still applies');

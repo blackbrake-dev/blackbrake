@@ -82,9 +82,11 @@ export function installAutostart({ home = guardHome(), start = true, file = auto
 // alerts window ('blackbrake watch') does not, nor a program that merely has it as an argument: the
 // title leads the whole command line. This decides whether uninstall may kill a pid.
 // Strict: the process must BE node running watch-main.mjs --background (src/guard/classify.mjs).
-const WATCHER = { test: (cmd) => classify(cmd) === 'watcher' };
+const watcherOf = (home, platform) => ({ test: (cmd) => classify(cmd, { home, platform }) === 'watcher' });
 
-export function isWatcherProcess(pid, { platform = process.platform, run = spawnSync, read = fs.readFileSync, find = systemProgram } = {}) {
+export function isWatcherProcess(pid, { platform = process.platform, run = spawnSync, read = fs.readFileSync, find = systemProgram, home = guardHome() } = {}) {
+  const WATCHER = watcherOf(home, platform);
+
   try {
     if (platform === 'linux') return WATCHER.test(String(read(`/proc/${pid}/cmdline`, 'utf8')).replace(/\0/g, '\n'));
     const ps = find(platform === 'win32' ? 'tasklist.exe' : 'ps', { platform });
@@ -138,7 +140,7 @@ export function removeAutostart({ home = guardHome(), file = autostartFile(), ki
 
   if (sweep && kill) {
     const unloaded = launchd ? bootoutLaunchAgent(sweepOptions) : 'skipped';
-    const stopped = stopBlackbrake({ windows, ...sweepOptions });
+    const stopped = stopBlackbrake({ windows, home, ...sweepOptions });
 
     onSweep?.({ ...stopped, launchd: unloaded });
 
@@ -150,7 +152,7 @@ export function removeAutostart({ home = guardHome(), file = autostartFile(), ki
   try {
     const pid = Number.parseInt(fs.readFileSync(path.join(home, 'watch-bg.pid'), 'utf8'), 10);
 
-    if (kill && Number.isInteger(pid) && pid > 0 && isBackgroundRunning(home) && isWatcherProcess(pid)) process.kill(pid);
+    if (kill && Number.isInteger(pid) && pid > 0 && isBackgroundRunning(home) && isWatcherProcess(pid, { home })) process.kill(pid);
   } catch { /* not running */ }
 
   return removed;

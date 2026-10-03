@@ -97,14 +97,13 @@ export function windowEnv(env = process.env, home = null) {
 // background watcher is 'blackbrake watcher'. The title must lead the command line.
 // Strict: the process must BE node running watch-main.mjs, not merely mention it (src/guard/classify.mjs;
 // review C: a decoy that named the file kept the alerts window from opening).
-const WINDOW = (cmd) => classify(cmd) === 'window';
-
 // Whether another alerts window is already open for this user, whichever guard folder it uses (a
 // copy run from a checkout or a relocated BLACKBRAKE_HOME keeps its pid file elsewhere, so the
 // per-folder check alone would open a second window). Reads the process table: /proc on Linux, ps
 // on macOS, a fixed PowerShell query on Windows. If it cannot tell, it says no and the per-folder
 // check still applies.
-export function liveWindowRunning({ platform = process.platform, run = spawnSync, find = systemProgram, readdir = fs.readdirSync, read = fs.readFileSync } = {}) {
+export function liveWindowRunning({ home = guardHome(), platform = process.platform, run = spawnSync, find = systemProgram, readdir = fs.readdirSync, read = fs.readFileSync } = {}) {
+  const WINDOW = (cmd) => classify(cmd, { home, platform }) === 'window';
   const other = (pid) => Number(pid) !== process.pid;
 
   try {
@@ -195,7 +194,7 @@ export function maybeOpenWindow(sessionId, { home = guardHome(), env = process.e
 
   // Only now, once per session and after the hook has answered: one process-table read. A window
   // already open serves this session too; the session is marked so it is not asked again.
-  if (running()) {
+  if (running({ home, platform })) {
     setSession(sessionId, { windowOpened: new Date().toISOString() }, home);
     fs.rmSync(claim, { force: true });
 

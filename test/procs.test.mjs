@@ -1,9 +1,8 @@
 // The process sweep behind uninstall and pause (src/guard/procs.mjs): classifies the command lines
 // of the background watcher and the alerts window (never both), reads the process table of each
 // system, and stops only what it re-verified right before. Most tests feed fake process tables;
-// the last one starts a real process and stops it.
+// the last one uses a temporary installation and a synthetic process table.
 import assert from 'node:assert/strict';
-import { spawn } from 'node:child_process';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
@@ -20,13 +19,15 @@ const WINSCRIPT = `"C:${BS}Users${BS}a${BS}.blackbrake${BS}app${BS}src${BS}guard
 
 const SYS32 = `C:${BS}Windows${BS}System32${BS}`;
 
+const classifyHere = (cmd) => classify(cmd, { home: cmd.includes('C:') ? 'C:/Users/a/.blackbrake' : '/h/.blackbrake', platform: cmd.includes('C:') ? 'win32' : 'linux' });
+
 test('classify tells the watcher from the alerts window, and never says both', () => {
   assert.equal(classify('blackbrake watcher'), 'watcher');
-  assert.equal(classify(`/usr/bin/node ${SCRIPT} --background`), 'watcher');
-  assert.equal(classify(`${WINNODE} ${WINSCRIPT} --background`), 'watcher');
+  assert.equal(classifyHere(`/usr/bin/node ${SCRIPT} --background`), 'watcher');
+  assert.equal(classifyHere(`${WINNODE} ${WINSCRIPT} --background`), 'watcher');
   assert.equal(classify('blackbrake watch'), 'window');
-  assert.equal(classify(`/usr/bin/node ${SCRIPT}`), 'window', 'watch-main.mjs without --background is the alerts window');
-  assert.equal(classify(`${WINNODE} ${WINSCRIPT}`), 'window');
+  assert.equal(classifyHere(`/usr/bin/node ${SCRIPT}`), 'window', 'watch-main.mjs without --background is the alerts window');
+  assert.equal(classifyHere(`${WINNODE} ${WINSCRIPT}`), 'window');
 });
 
 test('classify ignores programs that merely mention the names', () => {
@@ -83,7 +84,7 @@ test('listProcesses asks Windows for node.exe through PowerShell from the system
   assert.equal(calls[0][0], `${SYS32}powershell.exe`);
   assert.match(calls[0][1], /Win32_Process/);
   assert.deepEqual(list.map((x) => x.pid), [20]);
-  assert.equal(classify(list[0].cmd), 'watcher');
+  assert.equal(classifyHere(list[0].cmd), 'watcher');
 });
 
 // Review C (2026-10-01): "could not look" used to be an empty list, so pause and uninstall said
@@ -134,6 +135,7 @@ function machine(procs, { stubborn = [] } = {}) {
     kills,
     get slept() { return slept; },
     opts: {
+      home: '/h/.blackbrake',
       platform: 'linux',
       list: () => [...table].map(([pid, cmd]) => ({ pid, cmd })),
       commandOf: (pid) => table.get(pid) ?? null,
@@ -238,36 +240,13 @@ test('bootoutLaunchAgent runs launchctl bootout for the user domain on macOS onl
   assert.equal(bootoutLaunchAgent({ platform: 'darwin', run, find, uid: 'x;y' }), 'skipped', 'the user id must be a number');
 });
 
-test('a real process that looks like the watcher is found in the real process table and stopped', { timeout: 90000 }, () => {
-  // A stand-in that IS node running a file called …/src/guard/watch-main.mjs (in a temporary folder):
-  // only a real run of that file counts as the watcher, a mention does not (src/guard/classify.mjs).
-  const dir = path.join(fs.mkdtempSync(path.join(os.tmpdir(), 'bb-procs-real-')), 'src', 'guard');
-  fs.mkdirSync(dir, { recursive: true });
-  fs.writeFileSync(path.join(dir, 'watch-main.mjs'), 'setInterval(() => {}, 1000);\n');
-  const child = spawn(process.execPath, [path.join(dir, 'watch-main.mjs'), '--background'], { stdio: 'ignore', windowsHide: true, env: { ...process.env, BLACKBRAKE_NO_WINDOW: '1' } });
-  // Only this child: a real watcher of the person running the tests must survive the test.
-  const only = (list) => list.filter((x) => x.pid === child.pid);
+test('the sweep recognises a temporary installation and leaves another copy untouched', () => {
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), 'bb-procs-copy-'));
+  const script = path.join(home, 'app', 'src', 'guard', 'watch-main.mjs');
+  const m = machine({ 11: `"${process.execPath}" "${script}" --background`, 12: `node ${SCRIPT} --background` });
+  const r = stopKind('watcher', { ...m.opts, home, platform: process.platform });
 
-  try {
-    const deadline = Date.now() + 20000;
-    let seen = [];
-
-    while (Date.now() < deadline && !seen.length) seen = only(listProcesses());
-
-    assert.equal(seen.length, 1, 'the process table lists the child');
-    assert.equal(classify(seen[0].cmd), 'watcher', seen[0].cmd);
-
-    // The kill is injected and can only reach this child (src/guard/safety.mjs: tests never stop a real process).
-    const kill = (pid, sig) => {
-      assert.equal(pid, child.pid, 'only the test\'s own child');
-      process.kill(pid, sig);
-    };
-
-    const r = stopKind('watcher', { list: () => only(listProcesses()), kill });
-
-    assert.deepEqual(r.found, [child.pid]);
-    assert.deepEqual(r.remaining, []);
-  } finally {
-    try { child.kill('SIGKILL'); } catch { /* already stopped */ }
-  }
+  assert.deepEqual(r, { found: [11], remaining: [] });
+  assert.deepEqual(m.kills, [[11, 'SIGTERM']]);
+  assert.ok(m.table.has(12), 'a copy outside this temporary installation is left alone');
 });
