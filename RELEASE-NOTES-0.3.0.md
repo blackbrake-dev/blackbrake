@@ -39,7 +39,7 @@ Pause, clean uninstall, spend brakes and opt-in reports, plus a round of guard h
 
 ## How it was checked
 
-- 573 tests: 570 pass, 0 fail, 3 skipped (platform-specific), run in a temporary home.
+- 574 tests: 571 pass, 0 fail, 3 skipped (platform-specific), run in a temporary home.
 - CI on Windows, macOS and Linux × Node 20, 22 and 24: 9/9 green.
 - Review rounds with independent agents; every high and medium finding they reported was fixed and
   re-checked.

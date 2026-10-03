@@ -216,3 +216,16 @@ test('the saved loop calls honour a longer window and more calls than the defaul
   assert.equal(readLoopSnapshot('s', home, now).calls.length, 2, 'default: two minutes');
   assert.equal(readLoopSnapshot('s', home, now, { windowMs: 30 * 60e3, windowSize: 15 }).calls.length, 12);
 });
+
+// Review (2026-10-03), older than 0.3.0: a git alias that shells out to blackbrake hides the real
+// subcommand behind the alias name (`git -c alias.x=!blackbrake x pause`).
+test('blackbrake behind a git shell alias is denied, whatever follows', () => {
+  const ctx = { mode: 'observe', rules: loadRules(), home: os.homedir() };
+
+  for (const command of [
+    'git -c alias.x=!blackbrake x brakes loop off',
+    'git -c alias.x=!blackbrake x pause',
+    'git -c "alias.x=!blackbrake" x mode observe',
+    'git config alias.y "!blackbrake" && git y uninstall',
+  ]) assert.equal(decide('PreToolUse', { tool_name: 'Bash', tool_input: { command } }, ctx).output?.hookSpecificOutput?.permissionDecision, 'deny', command);
+});

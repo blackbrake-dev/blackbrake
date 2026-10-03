@@ -796,6 +796,10 @@ function blackbrakeRunsNonRead(view) {
     for (let at = i; at < words.length; at++) {
       if (!isBlackbrake(words[at])) continue;
 
+      // A shell-out alias (git's "!program", as in `git -c alias.x=!blackbrake x pause`): the real
+      // subcommand comes after the alias name, where it cannot be read. Refused, whatever follows.
+      if (/(^|=)["']?!/.test(words[at])) return true;
+
       // Read the words the way bin/blackbrake.mjs parseArgs does: a flag that takes a value swallows
       // the next word (`blackbrake --path status pause` runs pause), every other flag is skipped.
       let j = at + 1;
