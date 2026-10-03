@@ -720,7 +720,7 @@ export function readOnlyCommand(command) {
 // `docker pause $ID` is refused too; cmd's pause would hang the agent's keyboardless shell anyway.
 const PTY_WRAPPER = /\b(script|expect|unbuffer|winpty|socat|scriptreplay|conpty|ptyprocess|node-pty|pty\.spawn|pexpect)\b|\b(tmux|screen)\b[^\n]*(send-keys|-X\s+stuff)/i;
 
-const LOWERING = /\b(mode\s+observe|observar|uninstall|background\s+off|window\s+off|permissions|--purge|pause)\b/i;
+const LOWERING = /\b(mode\s+observe|observar|uninstall|background\s+off|window\s+off|permissions|--purge|pause|(?<!-)brakes(?!-))\b/i;
 
 const EXPANSION = /\$\{?\w+\}?|%\w+%|\$env:\w+|\$\(|`|\beval\b|\biex\b|Invoke-Expression|&\s*\(/i;
 
@@ -729,7 +729,7 @@ export const unquote = (cmd) => String(cmd).replace(/["'^]/g, '');
 
 // blackbrake named anywhere, plus an expansion and a lowering word anywhere (not only adjacent):
 // `blackbrake $(echo mode) observe`.
-const LOWERING_WORD = /\b(observe|observar|uninstall|purge|permissions|pause|pausar)\b|\bbackground\b[^\n]*\boff\b|\bwindow\b[^\n]*\boff\b/i;
+const LOWERING_WORD = /\b(observe|observar|uninstall|purge|permissions|pause|pausar|(?<!-)brakes(?!-)|loosen|aflojar)\b|\bbackground\b[^\n]*\boff\b|\bwindow\b[^\n]*\boff\b/i;
 
 export const lowersThroughWrapper = (raw) => {
   const cmd = unquote(raw);
@@ -758,7 +758,7 @@ const LAUNCHERS = new Set(['env', 'sudo', 'doas', 'nohup', 'time', 'command', 'e
 // The subcommands that change something (bin/blackbrake.mjs and src/cli/features): wherever blackbrake
 // appears, it followed by one of these is refused. A launcher list can never be complete (flock,
 // taskset, strace, ssh, su, find -exec, git aliases…), so position alone does not decide (round 2, V1).
-const BLACKBRAKE_CHANGES = new Set(['setup', 'uninstall', 'mode', 'lang', 'watch', 'window', 'fix', 'background', 'permissions', 'claude', 'statusline', 'pause', 'resume', 'report', 'stop']);
+const BLACKBRAKE_CHANGES = new Set(['setup', 'uninstall', 'mode', 'lang', 'watch', 'window', 'fix', 'background', 'permissions', 'claude', 'statusline', 'pause', 'resume', 'report', 'stop', 'brakes']);
 
 // Naming blackbrake under another name: shell and PowerShell aliases, cmd macros.
 const ALIAS_VERBS = /^(alias|set-alias|new-alias|sal|nal|doskey)$/i;
@@ -819,7 +819,7 @@ function blackbrakeRunsNonRead(view) {
   return false;
 }
 
-const SHELL_TAMPER = /\bBLACKBRAKE_\w+\s*=|\b(pkill|killall|Stop-Process|taskkill)\b[^\n]{0,200}\bblackbrake\b|\blaunchctl\s+bootout\s+(gui|user)\/\d+\s*(?:$|[;&|])|\bblackbrake(\.mjs|\.cmd|\.ps1|\.exe)?["']?\s+(mode|uninstall|setup|background|window|permissions|lang|fix|pause|resume|stop|report)\b|\bwatch-main\.mjs|\b(node|bun|deno)(\.exe)?\b[^\n]*guard[\\/](cli|state|hook|policy|install)\.mjs|\bimport\(?[^\n]*guard[\\/](state|install)\.mjs|\bBLACKBRAKE_HOME\b|disableAllHooks|\bclaude(\.cmd|\.exe)?["']?\s+plugins?\s+(disable|uninstall|remove|rm)\b|\bplugins?\s+marketplace\s+(remove|rm)\b[^\n]*blackbrake/i;
+const SHELL_TAMPER = /\bBLACKBRAKE_\w+\s*=|\b(pkill|killall|Stop-Process|taskkill)\b[^\n]{0,200}\bblackbrake\b|\blaunchctl\s+bootout\s+(gui|user)\/\d+\s*(?:$|[;&|])|\bblackbrake(\.mjs|\.cmd|\.ps1|\.exe)?["']?\s+(mode|uninstall|setup|background|window|permissions|lang|fix|pause|resume|stop|report|brakes)\b|\bwatch-main\.mjs|\b(node|bun|deno)(\.exe)?\b[^\n]*guard[\\/](cli|state|hook|policy|install)\.mjs|\bimport\(?[^\n]*guard[\\/](state|install)\.mjs|\bBLACKBRAKE_HOME\b|disableAllHooks|\bclaude(\.cmd|\.exe)?["']?\s+plugins?\s+(disable|uninstall|remove|rm)\b|\bplugins?\s+marketplace\s+(remove|rm)\b[^\n]*blackbrake/i;
 
 
 const CLAUDE_CONFIG_IN_SHELL = /\.claude\.json\b|\.claude[\\/]+settings(\.local)?\.json\b|managed-settings\.json\b|\.codex[\\/]+(hooks\.json|config\.toml)|\.gemini[\\/]+(settings\.json|config[\\/]+hooks\.json)|\.cursor[\\/]+hooks\.json|\.copilot[\\/]+(hooks|settings\.json|config\.json)|\.github[\\/]+(hooks|copilot)[\\/]|\.codeium[\\/]+(windsurf[\\/]+)?hooks\.json|\.(windsurf|devin)[\\/]+hooks\.json|\.devin[\\/]+(hooks\.v1\.json|config(\.local)?\.json)|[\\/]devin[\\/]+config\.json/i;

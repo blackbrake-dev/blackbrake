@@ -67,7 +67,11 @@ export async function applyBrakes(p, change, { io = {}, deps = realDeps(), print
   }
 
   deps.set(next);
-  print(['', `  ${p.green('✓')} ${p.cream(t('Spend brakes saved'))}`, ...brakeLines(p, deps.get()), '']);
+  const saved = deps.get();
+  // A fixed amount wins over the percentile: say so when the percentile was the thing changed.
+  const note = change !== 'reset' && change.path.join('.') === 'cost.percentile' && saved.cost.fixed !== null ? [`  ${p.amber(t('A fixed amount is set, and it is what counts. "blackbrake brakes cost.fixed off" goes back to the percentile.'))}`] : [];
+
+  print(['', `  ${p.green('✓')} ${p.cream(t('Spend brakes saved'))}`, ...brakeLines(p, saved), ...note, '']);
 
   return 0;
 }

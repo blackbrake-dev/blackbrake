@@ -8,7 +8,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { t } from '../i18n.mjs';
 import { isLocalPath } from '../text.mjs';
-import { baselineFromEpisodes, overTokenLimit } from '../guard/spend.mjs';
+import { baselineFromEpisodes, overTokenLimit, thresholdFor } from '../guard/spend.mjs';
 import { getSpendSettings } from '../guard/spend-settings.mjs';
 import { appendLog, guardHome, writePrivate } from '../guard/state.mjs';
 
@@ -249,7 +249,13 @@ export function createDevinSpend({ home = guardHome(), root = devinRoot(), notif
 
     appendLog([entry], sessionKey(file), home);
 
-    const body = t('This Codex episode is at {tokens} tokens; your p90 is {p90}.', { tokens: episode.tokens, p90: baseline.p90 }).replaceAll('Codex', 'Devin');
+    const pct = getSpendSettings(home).tokens.percentile;
+
+    const text = pct === 90
+      ? t('This Codex episode is at {tokens} tokens; your p90 is {p90}.', { tokens: episode.tokens, p90: baseline.p90 })
+      : t('This Codex episode is at {tokens} tokens; your p{pct} is {limit}.', { tokens: episode.tokens, pct, limit: thresholdFor(baseline, pct) });
+
+    const body = text.replaceAll('Codex', 'Devin');
 
     try { notifier?.('blackbrake · Devin', body); } catch { /* the log keeps it */ }
 

@@ -6,7 +6,8 @@ import os from 'node:os';
 import path from 'node:path';
 import { test } from 'node:test';
 import { applyBrakeChange, getSpendSettings, loosens, parseBrakeChange, SPEND_DEFAULTS } from '../src/guard/spend-settings.mjs';
-import { baselineFromEpisodes, spendAlert, thresholdFor } from '../src/guard/spend.mjs';
+import { baselineFromEpisodes, overTokenLimit, spendAlert, thresholdFor } from '../src/guard/spend.mjs';
+import { appendLoopCall, getSpendBaseline, readLoopSnapshot, setSpendBaseline } from '../src/guard/spend-state.mjs';
 import { createLoopDetector } from '../src/guard/loops.mjs';
 import { setSetting } from '../src/guard/state.mjs';
 import { applyBrakes, runBrakes } from '../src/cli/features/brakes.mjs';
@@ -160,4 +161,58 @@ test('an agent is denied changing the spend brakes, by command or by writing the
     const out = r.output?.hookSpecificOutput;
     assert.equal(out?.permissionDecision, 'deny', JSON.stringify(input));
   }
+});
+
+// Review M1 (2026-10-03): behind a wrapper that is not a known launcher, only the verbs listed as
+// changes are refused; `brakes` was missing, so `flock … blackbrake brakes loop off` got through.
+test('wrapped or fed through a pseudo-terminal, `blackbrake brakes` is still denied', () => {
+  const ctx = { mode: 'observe', rules: loadRules(), home: os.homedir() };
+
+  for (const command of [
+    'flock /tmp/l blackbrake brakes loop off',
+    'taskset 1 blackbrake brakes quota off',
+    'strace -f blackbrake brakes cost off',
+    'ssh localhost blackbrake brakes tokens off',
+    'find . -maxdepth 0 -exec blackbrake brakes cost.fixed 1000 ;',
+    'printf "loosen\n" | script -qec "blackbrake brakes loop off" /dev/null',
+    'b=blackbrake; $b brakes reset',
+  ]) assert.equal(decide('PreToolUse', { tool_name: 'Bash', tool_input: { command } }, ctx).output?.hookSpecificOutput?.permissionDecision, 'deny', command);
+});
+
+test('a branch or folder named like spend-brakes is not mistaken for the brakes command', () => {
+  const ctx = { mode: 'observe', rules: loadRules(), home: os.homedir() };
+
+  for (const command of [
+    'cd "$HOME/projects/blackbrake" && git push origin spend-brakes',
+    'git switch spend-brakes && echo $PWD',
+    'gh run list --branch spend-brakes --limit 2',
+  ]) assert.notEqual(decide('PreToolUse', { tool_name: 'Bash', tool_input: { command } }, ctx).output?.hookSpecificOutput?.permissionDecision, 'deny', command);
+});
+
+// ---------- wiring (review, 2026-10-03) ----------
+
+test('the percentile table survives being saved and read back', () => {
+  const home = tmp();
+  const baseline = baselineFromEpisodes(Array.from({ length: 40 }, (_, i) => ({ cost: i })), 'claude');
+  setSpendBaseline('claude', baseline, home);
+  const back = getSpendBaseline('claude', home);
+  assert.equal(thresholdFor(back, 75), thresholdFor(baseline, 75));
+  assert.equal(thresholdFor(back, 99), thresholdFor(baseline, 99));
+});
+
+test('the token brake follows its percentile and can be switched off', () => {
+  const baseline = baselineFromEpisodes(Array.from({ length: 100 }, (_, i) => ({ cost: i + 1 })), 'codex');
+  assert.equal(overTokenLimit(baseline, 92, SPEND_DEFAULTS), true);
+  assert.equal(overTokenLimit(baseline, 92, { ...SPEND_DEFAULTS, tokens: { on: true, percentile: 95 } }), false);
+  assert.equal(overTokenLimit(baseline, 1000, { ...SPEND_DEFAULTS, tokens: { on: false, percentile: 90 } }), false);
+  assert.equal(overTokenLimit({ ...baseline, ready: false }, 1000, SPEND_DEFAULTS), false, 'no history, no token brake');
+});
+
+test('the saved loop calls honour a longer window and more calls than the default', () => {
+  const home = tmp();
+  const now = Date.now();
+
+  for (let i = 0; i < 12; i++) appendLoopCall('s', { at: now - (12 - i) * 60e3, fingerprint: 'a'.repeat(64), count: 1, alert: false }, home);
+  assert.equal(readLoopSnapshot('s', home, now).calls.length, 2, 'default: two minutes');
+  assert.equal(readLoopSnapshot('s', home, now, { windowMs: 30 * 60e3, windowSize: 15 }).calls.length, 12);
 });

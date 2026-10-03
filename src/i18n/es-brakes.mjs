@@ -30,6 +30,7 @@ export const ES = {
   'Codex quota: brake': 'Cuota de Codex: freno',
   'Codex quota: 5-hour %': 'Cuota de Codex: % de 5 horas',
   'Codex quota: weekly %': 'Cuota de Codex: % semanal',
+  'A fixed amount is set, and it is what counts. "blackbrake brakes cost.fixed off" goes back to the percentile.': 'Hay un importe fijo y es el que cuenta. "blackbrake brakes cost.fixed off" vuelve al percentil.',
   'Back to the defaults': 'Volver a los valores por defecto',
   'This Codex episode is at {tokens} tokens; your p{pct} is {limit}.': 'Este episodio de Codex lleva {tokens} tokens; tu p{pct} es {limit}.',
   'blackbrake: the same call was requested {n} times in {m} minutes. It may be a loop; continue?': 'blackbrake: se ha pedido la misma llamada {n} veces en {m} minutos. Puede ser un bucle; ¿continuar?',
