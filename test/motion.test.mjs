@@ -50,7 +50,9 @@ test('loading: nothing moves on a pipe; on a terminal it ends with a line of tex
   s2.update('Scanning Cursor', [2, 4]);
   await new Promise((r) => setTimeout(r, 20));
   s2.stop();
+  // oxlint-disable-next-line no-control-regex -- the test checks cursor escape codes
   assert.match(tty.text, /\x1b\[\?25l/);
+  // oxlint-disable-next-line no-control-regex -- the test checks cursor escape codes
   assert.match(tty.text, /\x1b\[\?25h$/, 'the cursor is always given back');
   assert.match(strip(tty.text), /Scanning Cursor/);
   assert.match(strip(progressBar(p, 5, 10, 10)), /^█+▌░+$/);

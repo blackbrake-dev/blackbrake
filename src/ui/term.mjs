@@ -88,6 +88,7 @@ export function truncate(value, n) {
   let seen = 0;
 
   for (let i = 0; i < s.length;) {
+    // oxlint-disable-next-line no-control-regex -- parsing ANSI escape sequences is the point
     const m = /^\x1b\[[0-9;?]*[A-Za-z]/.exec(s.slice(i));
 
     if (m) {
@@ -214,6 +215,7 @@ export function clearScreen(out = process.stdout) {
 
 // The terminal window's title (only on a terminal).
 export function setTitle(text, out = process.stdout) {
+  // oxlint-disable-next-line no-control-regex -- control characters are stripped from the title
   if (out.isTTY) out.write(`\x1b]0;${String(text).replace(/[\x00-\x1f\x7f]/g, '')}\x07`);
 }
 

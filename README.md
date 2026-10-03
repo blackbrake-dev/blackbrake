@@ -9,8 +9,8 @@ blackbrake
 
 Install it once and open it from any folder by typing `blackbrake`, like `claude` or `gemini`. It
 installs one package with no dependencies and no install scripts, published with npm provenance.
-Current stable: **v0.2.3** (published 2026-09-28); development: v0.3.0-dev (local, not published:
-pending security review and native validation on macOS and Linux). To try it without installing
+Current stable: **v0.2.3** (published 2026-09-28). Next: **v0.3.0** (prepared, not published yet; see
+[release notes](RELEASE-NOTES-0.3.0.md)). To try it without installing
 anything: `npx blackbrake` (or `npx blackbrake audit` for the report alone). Update with
 `npm install -g blackbrake@latest`, then run `blackbrake setup` so guard's own copy (`~/.blackbrake/app`)
 is refreshed too (`blackbrake status` tells you if it is out of date).
@@ -341,15 +341,15 @@ Requires Node.js 20 or later; use 22 or 24 (LTS), since Node 20 has reached its 
 
 ## Status and Roadmap
 
-**v0.3.0-dev (local, not published, 2026-10-01):** pause and resume, uninstall from the menu with a
+**v0.3.0 (prepared 2026-10-03, not published yet):** pause and resume, uninstall from the menu with a
 process sweep that checks nothing is left running, the alerts window opening once per session (not
 over SSH, not for background agents, at most once every 10 minutes), Cursor's `sessionStart`, opt-in
 local reports, and spend brakes (episode cost and token alerts against your own history, repeated tool
 calls). Fixed on the way: Cursor on Windows sends its hook input with a byte order mark, which made
 v0.2.3 refuse every Cursor step as "could not check" (found in a real `cursor-agent` session; whether
-the Cursor editor does the same is still to be confirmed). Before publishing: an independent security
-review, CI on Windows, macOS and Linux × Node 20/22/24, and a hands-on check on real macOS and Linux
-desktops.
+the Cursor editor does the same is still to be confirmed). Done before publishing: independent security
+review rounds, with every high and medium finding they reported fixed, and CI on Windows, macOS and Linux × Node
+20/22/24. Still to do: a hands-on check on real macOS and Linux desktops.
 
 **[PLANNED] Wave 2:** Cost and damage brakes with session context built on
 [cc-safety-net](https://github.com/kenryu42/cc-safety-net) rather than replacing it. Full guard

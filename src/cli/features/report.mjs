@@ -99,7 +99,7 @@ export function gatherData({ home, days = 7, version } = {}) {
     if (ACTIONS.has(e.action)) add(actions, e.action);
 
     // Only secret findings carry a rule id; other kinds use that field for other things.
-    if (/^secret-/.test(e.kind) && e.rule) add(byRule, e.rule);
+    if (String(e.kind).startsWith('secret-') && e.rule) add(byRule, e.rule);
   }
 
   let protectedIds = [];

@@ -97,6 +97,7 @@ test('home and privacy screens', () => {
   const head = homeHeader(p, '1.2.3', 96).join('\n');
   assert.match(head, /█▀▀▀▄ █ {5}▄▀▀▀▄/, 'the big name (shapes only without colour)');
   const lit = homeHeader(createPainter(3), '1.2.3', 96).join('\n');
+  // oxlint-disable-next-line no-control-regex -- the test checks ANSI colour codes
   assert.match(lit, /\x1b\[38;2;255;179;71m/, 'BRAKE lit from above in amber');
   assert.match(lit, /48;2;90;42;20m|38;2;90;42;20m/, 'drop shadow in the brand brown');
   assert.match(head, /v1\.2\.3/);

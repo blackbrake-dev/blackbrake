@@ -65,6 +65,7 @@ test('disk-derived names are cleaned and network paths are never read', () => {
 
  return v; });
   assert.ok(strings.some((s) => s.includes('fake')), 'the skill was read');
+  // oxlint-disable-next-line no-control-regex -- the test checks that no control characters remain
   assert.ok(!strings.some((s) => /[\u0000-\u001f\u007f-\u009f]/.test(s)), 'no control characters anywhere');
   assert.ok(!inv.projectDirs.some((d) => d.startsWith('\\\\')), 'UNC project paths are skipped');
 });

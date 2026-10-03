@@ -62,7 +62,7 @@ export function scrub({ files, keys, rules, home = guardHome(), now = Date.now }
   const result = { id, changed: [], replaced: 0, busy: [], failed: [] };
   const index = [];
 
-  for (const file of [...new Set(files)]) {
+  for (const file of new Set(files)) {
     if (skippedAsOwnCredential(file)) continue;
     let read = null;
 
