@@ -76,8 +76,42 @@ const loopFile = (home, id) => path.join(spendDir(home), 'loops', `${sessionHash
 
 export function readLoopSnapshot(id, home = guardHome(), now = Date.now()) {
   let text = '';
+  let fd;
 
-  try { text = fs.readFileSync(loopFile(home, id), 'utf8'); } catch { return null; }
+  try {
+    if (!path.isAbsolute(home) || /^[\\/]{2}/.test(home) || fs.lstatSync(home).isSymbolicLink()) return null;
+    const root = fs.realpathSync(home);
+    const file = loopFile(root, id);
+    let current = root;
+    let expected;
+
+    for (const part of path.relative(root, file).split(path.sep)) {
+      current = path.join(current, part);
+      expected = fs.lstatSync(current);
+
+      if (expected.isSymbolicLink()) return null;
+    }
+
+    if (!expected.isFile() || expected.nlink > 1) return null;
+    const flags = fs.constants.O_RDONLY | (fs.constants.O_NONBLOCK ?? 0) | (fs.constants.O_NOFOLLOW ?? 0);
+
+    fd = fs.openSync(file, flags);
+    const stat = fs.fstatSync(fd);
+
+    if (!stat.isFile() || stat.nlink > 1 || stat.dev !== expected.dev || stat.ino !== expected.ino || fs.realpathSync(file) !== file) return null;
+    const offset = Math.max(0, stat.size - 65_536);
+    const buffer = Buffer.alloc(Math.min(stat.size, 65_536));
+    const length = fs.readSync(fd, buffer, 0, buffer.length, offset);
+
+    text = buffer.subarray(0, length).toString('utf8');
+
+    if (offset > 0) {
+      const newline = text.indexOf('\n');
+
+      text = newline < 0 ? '' : text.slice(newline + 1);
+    }
+  } catch { return null; }
+  finally { if (fd !== undefined) fs.closeSync(fd); }
 
   const rows = [];
 
@@ -85,7 +119,7 @@ export function readLoopSnapshot(id, home = guardHome(), now = Date.now()) {
     try {
       const row = JSON.parse(line);
 
-      if (Number.isFinite(row?.at) && now - row.at <= 120_000 && /^[a-f0-9]{64}$/.test(row?.fingerprint)) rows.push(row);
+      if (Number.isFinite(row?.at) && row.at <= now && now - row.at <= 120_000 && /^[a-f0-9]{64}$/.test(row?.fingerprint)) rows.push(row);
     } catch { /* a partial final line is ignored */ }
   }
 
