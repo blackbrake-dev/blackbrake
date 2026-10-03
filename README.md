@@ -9,8 +9,7 @@ blackbrake
 
 Install it once and open it from any folder by typing `blackbrake`, like `claude` or `gemini`. It
 installs one package with no dependencies and no install scripts, published with npm provenance.
-Current stable: **v0.2.3** (published 2026-09-28). Next: **v0.3.0** (prepared, not published yet; see
-[release notes](RELEASE-NOTES-0.3.0.md)). To try it without installing
+Current stable: **v0.3.0** (published 2026-10-03; see [release notes](RELEASE-NOTES-0.3.0.md)). To try it without installing
 anything: `npx blackbrake` (or `npx blackbrake audit` for the report alone). Update with
 `npm install -g blackbrake@latest`, then run `blackbrake setup` so guard's own copy (`~/.blackbrake/app`)
 is refreshed too (`blackbrake status` tells you if it is out of date).
@@ -348,13 +347,13 @@ Requires Node.js 20 or later; use 22 or 24 (LTS), since Node 20 has reached its 
 
 ## Status and Roadmap
 
-**v0.3.0 (prepared 2026-10-03, not published yet):** pause and resume, uninstall from the menu with a
+**v0.3.0 (published 2026-10-03):** pause and resume, uninstall from the menu with a
 process sweep that checks nothing is left running, the alerts window opening once per session (not
 over SSH, not for background agents, at most once every 10 minutes), Cursor's `sessionStart`, opt-in
 local reports, and spend brakes you can adjust (episode cost and token alerts against your own history
 or a fixed amount, repeated tool calls, Codex quota). Fixed on the way: Cursor on Windows sends its hook input with a byte order mark, which made
 v0.2.3 refuse every Cursor step as "could not check" (found in a real `cursor-agent` session; whether
-the Cursor editor does the same is still to be confirmed). Done before publishing: independent security
+the Cursor editor does the same is still to be confirmed). Before publishing: independent security
 review rounds, with every high and medium finding they reported fixed, and CI on Windows, macOS and Linux × Node
 20/22/24. Still to do: a hands-on check on real macOS and Linux desktops.
 
