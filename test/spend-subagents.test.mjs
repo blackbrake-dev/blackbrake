@@ -87,7 +87,7 @@ test('Claude live spend attributes a new matching subagent to the open parent ep
   run('SessionStart', event(f.transcript));
   run('UserPromptSubmit', event(f.transcript, { prompt: 'fixture parent prompt' }));
   const started = getSession(SESSION, f.home).spend.open.start;
-  const after = new Date(started + 1000).toISOString();
+  const after = new Date(started).toISOString();
   const before = new Date(started - 1000).toISOString();
 
   fs.writeFileSync(path.join(f.children, 'agent-aaaaaaaaaaaaaaaa.jsonl'), jsonl(child('owned', SESSION, after)));
@@ -98,9 +98,9 @@ test('Claude live spend attributes a new matching subagent to the open parent ep
   const open = getSession(SESSION, f.home).spend.open;
   const expected = usageCost(usage('owned', SESSION, after).message.usage, 'claude-sonnet-5');
 
-  assert.match(result.systemMessage, /local p90/);
   assert.equal(open.responses, 1);
   assert.ok(Math.abs(open.cost - expected) < 1e-12);
+  assert.match(result?.systemMessage ?? '', /local p90/);
 
   const persisted = fs.readFileSync(path.join(f.home, 'sessions', fs.readdirSync(path.join(f.home, 'sessions'))[0]), 'utf8');
 
@@ -123,7 +123,7 @@ test('existing child spend is silent and a rewritten child response is not count
 
   const started = getSession(SESSION, f.home).spend.open.start;
   const liveFile = path.join(f.children, 'agent-bbbbbbbbbbbbbbbb.jsonl');
-  const rows = child('live', SESSION, new Date(started + 1000).toISOString());
+  const rows = child('live', SESSION, new Date(started).toISOString());
 
   fs.writeFileSync(liveFile, jsonl(rows));
   run('PostToolUse', event(f.transcript, { tool_name: 'Read', tool_input: {}, tool_response: 'fixture' }));
@@ -159,18 +159,18 @@ test('a child that continues after the next parent prompt is not reassigned to t
   const firstStart = getSession(SESSION, f.home).spend.open.start;
   const firstFile = path.join(f.children, 'agent-aaaaaaaaaaaaaaaa.jsonl');
 
-  fs.writeFileSync(firstFile, jsonl(child('first-a', SESSION, new Date(firstStart + 100).toISOString())));
+  fs.writeFileSync(firstFile, jsonl(child('first-a', SESSION, new Date(firstStart).toISOString())));
   run('PostToolUse', event(f.transcript, { tool_name: 'Read', tool_input: {}, tool_response: 'fixture' }));
   run('UserPromptSubmit', event(f.transcript, { prompt: 'second parent prompt' }));
   const secondStart = getSession(SESSION, f.home).spend.open.start;
 
-  fs.appendFileSync(firstFile, jsonl([usage('first-b', SESSION, new Date(secondStart + 100).toISOString())]));
+  fs.appendFileSync(firstFile, jsonl([usage('first-b', SESSION, new Date(secondStart).toISOString())]));
   run('PostToolUse', event(f.transcript, { tool_name: 'Read', tool_input: {}, tool_response: 'fixture' }));
   assert.equal(getSession(SESSION, f.home).spend.open.cost, 0);
 
   const secondFile = path.join(f.children, 'agent-bbbbbbbbbbbbbbbb.jsonl');
 
-  fs.writeFileSync(secondFile, jsonl(child('second', SESSION, new Date(secondStart + 200).toISOString())));
+  fs.writeFileSync(secondFile, jsonl(child('second', SESSION, new Date(secondStart).toISOString())));
   run('PostToolUse', event(f.transcript, { tool_name: 'Read', tool_input: {}, tool_response: 'fixture' }));
   assert.ok(getSession(SESSION, f.home).spend.open.cost > 0);
 });
@@ -200,7 +200,7 @@ test('subagent enumeration rejects foreign paths, links, malformed entries and b
   });
 
   assert.equal(listed.length, 2);
-  assert.ok(listed.every((entry) => path.dirname(entry.file) === f.children));
+  assert.ok(listed.every((entry) => path.dirname(entry.file) === fs.realpathSync(f.children)));
   assert.ok(listed.every((entry) => /^agent-[0-9a-f]+\.jsonl$/i.test(path.basename(entry.file))));
   const allSafe = listClaudeSubagentFiles(f.transcript, SESSION, { roots: [f.root], maxFileBytes: 100 });
 
@@ -221,6 +221,28 @@ test('subagent enumeration rejects foreign paths, links, malformed entries and b
   fs.rmSync(path.join(linkedSession.project, SESSION), { recursive: true });
   fs.symlinkSync(outsideSession, path.join(linkedSession.project, SESSION), process.platform === 'win32' ? 'junction' : 'dir');
   assert.deepEqual(listClaudeSubagentFiles(linkedSession.transcript, SESSION, { roots: [linkedSession.root] }), []);
+});
+
+test('a trusted root alias accepts canonical children and still rejects links below the root', () => {
+  const f = fixture('root-alias');
+  const alias = path.join(f.base, 'projects-alias');
+  const name = 'agent-aabbccddaabbccdd.jsonl';
+  const rows = child('canonical', SESSION, '2020-01-01T00:00:00.000Z');
+
+  fs.symlinkSync(f.root, alias, process.platform === 'win32' ? 'junction' : 'dir');
+  fs.writeFileSync(path.join(f.children, name), jsonl(rows));
+  const listed = listClaudeSubagentFiles(path.join(alias, 'fixture-project', `${SESSION}.jsonl`), SESSION, { roots: [alias] });
+
+  assert.equal(listed.length, 1);
+  assert.deepEqual(liveCost.tailTranscript(listed[0].file, { roots: [alias] }).records, rows);
+
+  const outside = fs.mkdtempSync(path.join(os.tmpdir(), 'blackbrake-subagents-alias-outside-'));
+  const linked = path.join(f.root, 'linked-outside');
+
+  fs.writeFileSync(path.join(outside, 'outside.jsonl'), jsonl(rows));
+  fs.symlinkSync(outside, linked, process.platform === 'win32' ? 'junction' : 'dir');
+  assert.throws(() => liveCost.tailTranscript(path.join(fs.realpathSync(f.root), 'linked-outside', 'outside.jsonl'), { roots: [alias] }), /Untrusted/);
+  assert.throws(() => liveCost.tailTranscript(path.join(outside, 'outside.jsonl'), { roots: [alias] }), /Untrusted/);
 });
 
 test('opening a listed child revalidates session and subagents under the projects root', () => {

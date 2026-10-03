@@ -73,7 +73,11 @@ test('V5: an 8.3 short name reaches the real place (target or real home spelled 
   const shortBb = path.join(real, 'BLACKB~1');
 
   if (!fs.existsSync(shortBb)) return t.skip('8.3 names are off on this volume');
-  assert.equal(fs.realpathSync.native(shortBb).toLowerCase(), bb.toLowerCase());
+  const shortStat = fs.statSync(shortBb, { bigint: true });
+  const longStat = fs.statSync(bb, { bigint: true });
+
+  assert.equal(shortStat.dev, longStat.dev);
+  assert.equal(shortStat.ino, longStat.ino, 'both spellings identify the same directory');
   refused(path.join(shortBb, 'state.json'), real);
   refused(path.join(shortBb, 'not-yet.json'), real);
 

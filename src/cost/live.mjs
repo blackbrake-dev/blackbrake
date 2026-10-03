@@ -22,16 +22,35 @@ const inside = (root, file) => {
 
 const identityOf = (stat) => crypto.createHash('sha256').update(`${stat.dev}:${stat.ino}`).digest('hex').slice(0, 16);
 
-// Only a local absolute path lexically under a known root, reached without links. Nothing is resolved
-// or opened before that check, so a planted link (or a remote share behind one) is never followed.
+// Only a local absolute path lexically under a known root or its canonical spelling, reached
+// without links below that root. The target is never resolved before checking its path, so a
+// planted link (or a remote share behind one) is never followed.
 // The root is the user's own configuration and may itself be a link; below it nothing may be.
 const trustedFile = (file, roots) => {
   if (!localAbsolute(file)) throw new Error('Untrusted transcript path');
   const target = path.resolve(file);
-  const root = roots.filter(localAbsolute).map((r) => path.resolve(r)).find((r) => inside(r, target));
+  let root;
+  let current;
+
+  for (const candidate of roots.filter(localAbsolute)) {
+    const lexical = path.resolve(candidate);
+    let canonical;
+
+    // Known configuration roots alone may be resolved. macOS /var and /private/var are two
+    // spellings of one root; enumeration returns the latter and reads must revalidate its children.
+    try { canonical = fs.realpathSync(lexical); } catch { continue; }
+
+    if (!localAbsolute(canonical)) continue;
+
+    if (inside(lexical, target)) root = lexical;
+    else if (inside(canonical, target)) root = canonical;
+    else continue;
+    current = canonical;
+
+    break;
+  }
 
   if (!root) throw new Error('Untrusted transcript path');
-  let current = fs.realpathSync(root);
   let stat = null;
 
   for (const part of path.relative(root, target).split(path.sep).filter(Boolean)) {

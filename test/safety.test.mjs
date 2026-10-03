@@ -26,9 +26,11 @@ test('the real places: guard\'s folder, every agent\'s config, the login-item fo
     assert.ok(places.includes(p), p);
   }
 
-  for (const target of ['.blackbrake', '.blackbrake/state.json', '.claude/settings.json', '.cursor/hooks.json', '.BLACKBRAKE/x', 'Library/LaunchAgents/dev.blackbrake.watch.plist']) {
+  for (const target of ['.blackbrake', '.blackbrake/state.json', '.claude/settings.json', '.cursor/hooks.json', 'Library/LaunchAgents/dev.blackbrake.watch.plist']) {
     assert.equal(isRealPlace(path.join(real, target), real), true, target);
   }
+
+  assert.equal(isRealPlace(path.join(real, '.BLACKBRAKE/x'), real), process.platform !== 'linux', 'native filesystem case rules');
 
   for (const target of ['projects/app/.env', '.blackbrake-old/x', 'Documents', path.join('..', 'other', '.blackbrake')]) {
     assert.equal(isRealPlace(path.join(real, target), real), false, target);

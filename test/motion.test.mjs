@@ -1,6 +1,7 @@
 // Brakey's poses and sizes, the panels (header, box, bubble), loading indicators and transitions:
 // motion only on an interactive terminal, always ending in text, never touching a file or a pipe.
 import assert from 'node:assert/strict';
+import os from 'node:os';
 import { test } from 'node:test';
 import { goodbyeScene, progressBar, report, spinner, transition } from '../src/ui/motion.mjs';
 import { box, bubble, createPainter, mascot, mascotMedium, MEDIUM_WIDTH, POSES, strip, truncate, width } from '../src/ui/term.mjs';
@@ -57,8 +58,15 @@ test('loading: nothing moves on a pipe; on a terminal it ends with a line of tex
 
 test('the alerts window does not inherit what an agent sets to switch colour or motion off', async () => {
   const { windowEnv } = await import('../src/guard/window.mjs');
-  const env = windowEnv({ PATH: '/x', NO_COLOR: '1', TERM: 'dumb', CI: '1', FORCE_COLOR: '0', BLACKBRAKE_NO_ANIMATION: '1', ACCESSIBLE: '1', BLACKBRAKE_HOME: '/evil', NODE_OPTIONS: '--require ./x.js', NODE_PATH: '/r', LD_PRELOAD: '/r/x.so', DYLD_INSERT_LIBRARIES: '/r/x', LANG: 'es_ES.UTF-8' }, '/h/.blackbrake');
-  assert.deepEqual(Object.keys(env).sort(), ['ACCESSIBLE', 'BLACKBRAKE_HOME', 'LANG', 'PATH'], 'only what a terminal needs; nothing that switches colour off or loads code');
+  const env = windowEnv({ HOME: '/planted', XDG_CONFIG_HOME: '/planted/config', XDG_DATA_HOME: '/planted/data', PATH: '/x', NO_COLOR: '1', TERM: 'dumb', CI: '1', FORCE_COLOR: '0', BLACKBRAKE_NO_ANIMATION: '1', ACCESSIBLE: '1', BLACKBRAKE_HOME: '/evil', NODE_OPTIONS: '--require ./x.js', NODE_PATH: '/r', LD_PRELOAD: '/r/x.so', DYLD_INSERT_LIBRARIES: '/r/x', LANG: 'es_ES.UTF-8' }, '/h/.blackbrake');
+  const keys = ['ACCESSIBLE', 'BLACKBRAKE_HOME', 'LANG', 'PATH'];
+
+  if (process.platform !== 'win32') {
+    keys.push('HOME');
+    assert.equal(env.HOME, os.userInfo().homedir, 'terminal configuration comes from the account');
+  }
+
+  assert.deepEqual(Object.keys(env).sort(), keys.sort(), 'only what a terminal needs; nothing that switches colour off or loads code');
   assert.equal(env.BLACKBRAKE_HOME, '/h/.blackbrake', "guard's own folder, not the one the agent set");
 });
 
