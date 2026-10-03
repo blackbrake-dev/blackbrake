@@ -8,7 +8,7 @@
 // snapshots), all with the same message id and usage. Each response is counted once, using its
 // largest snapshot; counting lines inflated spend about 2x on the author's data.
 import { isHarnessText } from '../transcripts.mjs';
-import { priceFor, usageCost, usageSize } from './prices.mjs';
+import { priceFor, usageCost, usageSize, validUsage } from './prices.mjs';
 
 const toolUses = (msg) => (Array.isArray(msg.content) ? msg.content : []).filter((b) => b?.type === 'tool_use');
 
@@ -25,11 +25,18 @@ const userPromptText = (msg) => {
 
 export const isUserPromptMessage = (msg) => userPromptText(msg) !== null;
 
+// Invalid usage (F6.12 D2) is discarded: not a response, no cost, no size. Cost only moves up: a
+// later snapshot (genuine or forged) never lowers what a response was already charged.
+const amount = (value) => (Number.isFinite(value) && value >= 0 ? value : null);
+
 export function createUsageLedger({ keyOf = (record, msg) => msg.id ?? record.requestId ?? null, entries = [] } = {}) {
-  const responses = new Map(entries.map((entry) => [entry.key, { size: entry.size, cost: entry.cost }]));
+  const responses = new Map((Array.isArray(entries) ? entries : [])
+    .filter((entry) => entry && Number.isInteger(entry.size) && entry.size >= 0 && entry.size <= 4e9 && amount(entry.cost) !== null)
+    .map((entry) => [entry.key, { size: entry.size, cost: entry.cost }]));
 
   return {
     account(record, msg) {
+      if (!validUsage(msg.usage)) return { first: false, skipped: true, delta: 0, size: 0, sizeDelta: 0 };
       const key = keyOf(record, msg);
       const size = usageSize(msg.usage);
       const cost = usageCost(msg.usage, msg.model);
@@ -42,9 +49,9 @@ export function createUsageLedger({ keyOf = (record, msg) => msg.id ?? record.re
       }
 
       if (size > prev.size) {
-        const delta = cost - prev.cost;
+        const delta = Math.max(0, cost - prev.cost);
         const sizeDelta = size - prev.size;
-        Object.assign(prev, { size, cost });
+        Object.assign(prev, { size, cost: prev.cost + delta });
 
         return { first: false, delta, size, sizeDelta };
       }
@@ -111,6 +118,8 @@ export function createCostAnalyzer() {
       const msg = record.message;
 
       if (!msg) return;
+
+      if (msg.role === 'assistant' && msg.usage && !validUsage(msg.usage)) return;
       const ts = record.timestamp ? Date.parse(record.timestamp) : null;
 
       if (current) {
